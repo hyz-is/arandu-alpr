@@ -12,7 +12,7 @@ import (
 	"github.com/arandu-io/hesape/database/model"
 	"github.com/arandu-io/hesape/database/query"
 
-	skeleton "github.com/arandu-io/package-skeleton"
+	alpr "github.com/hyz-is/arandu-alpr"
 )
 
 // The four properties this package exists to keep are checked here, and they
@@ -32,11 +32,11 @@ import (
 // everyAction is the whole set the policy answers about. A test that listed
 // four of five would pass while the fifth was open.
 var everyAction = []security.Action{
-	skeleton.SkeletonView,
-	skeleton.SkeletonList,
-	skeleton.SkeletonCreate,
-	skeleton.SkeletonUpdate,
-	skeleton.SkeletonDelete,
+	alpr.AlprView,
+	alpr.AlprList,
+	alpr.AlprCreate,
+	alpr.AlprUpdate,
+	alpr.AlprDelete,
 }
 
 // administrator is the most privileged subject an application can produce. It
@@ -53,8 +53,8 @@ func TestThePolicyDeniesEveryActionByDefault(t *testing.T) {
 		t.Run(string(action), func(t *testing.T) {
 			t.Parallel()
 
-			_, err := security.Authorize(context.Background(), skeleton.SkeletonPolicy{},
-				administrator(), action, skeleton.Skeleton{})
+			_, err := security.Authorize(context.Background(), alpr.AlprPolicy{},
+				administrator(), action, alpr.Alpr{})
 			if !errors.Is(err, security.ErrForbidden) {
 				t.Fatalf("an unopened policy allowed %s: got %v, want ErrForbidden", action, err)
 			}
@@ -65,10 +65,10 @@ func TestThePolicyDeniesEveryActionByDefault(t *testing.T) {
 func TestThePolicyDeniesARecordOfAnotherTenant(t *testing.T) {
 	t.Parallel()
 
-	other := skeleton.Skeleton{ID: "record-1", TenantID: "globex", Name: "theirs"}
+	other := alpr.Alpr{ID: "record-1", TenantID: "globex", Name: "theirs"}
 
-	err := skeleton.SkeletonPolicy{}.Can(context.Background(),
-		administrator(), skeleton.SkeletonView, other)
+	err := alpr.AlprPolicy{}.Can(context.Background(),
+		administrator(), alpr.AlprView, other)
 	if err == nil {
 		t.Fatal("the policy allowed a record belonging to another tenant")
 	}
@@ -83,8 +83,8 @@ func TestThePolicyDeniesAGuest(t *testing.T) {
 	t.Parallel()
 
 	for _, action := range everyAction {
-		_, err := security.Authorize(context.Background(), skeleton.SkeletonPolicy{},
-			security.Guest("acme"), action, skeleton.Skeleton{})
+		_, err := security.Authorize(context.Background(), alpr.AlprPolicy{},
+			security.Guest("acme"), action, alpr.Alpr{})
 		if !errors.Is(err, security.ErrForbidden) {
 			t.Fatalf("a guest was allowed %s: got %v, want ErrForbidden", action, err)
 		}
@@ -97,8 +97,8 @@ func TestAuthorizeRefusesASubjectThatIsNobody(t *testing.T) {
 	// The zero Subject is a session that failed to load, not an anonymous
 	// reader, and it is refused before the policy is consulted. A package that
 	// answered it as a guest would answer a broken session as a visitor.
-	_, err := security.Authorize(context.Background(), skeleton.SkeletonPolicy{},
-		security.Subject{}, skeleton.SkeletonView, skeleton.Skeleton{})
+	_, err := security.Authorize(context.Background(), alpr.AlprPolicy{},
+		security.Subject{}, alpr.AlprView, alpr.Alpr{})
 	if !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("an empty subject was authorized: got %v, want ErrForbidden", err)
 	}
@@ -114,11 +114,11 @@ func nilHandle() *data.DB { return data.Wrap(nil, data.DialectSQLite) }
 func TestTheServiceRefusesBeforeReachingTheModel(t *testing.T) {
 	t.Parallel()
 
-	// A nil handle makes even construction of Skeletons panic, at the
+	// A nil handle makes even construction of Alprs panic, at the
 	// GetQueryGrammar the query asks the handle for. This catches moving the
 	// generated query constructor -- not only its terminal -- ahead of
 	// authorization.
-	service := skeleton.NewSkeletonService(nil)
+	service := alpr.NewAlprService(nil)
 	ctx := context.Background()
 
 	if _, err := service.Find(ctx, administrator(), "record-1"); !errors.Is(err, security.ErrForbidden) {
@@ -127,7 +127,7 @@ func TestTheServiceRefusesBeforeReachingTheModel(t *testing.T) {
 	if _, err := service.List(ctx, administrator(), data.Query{}); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("List reached the Model before the policy refusal: %v", err)
 	}
-	if _, err := service.Create(ctx, administrator(), skeleton.CreateRequest{Name: "one"}); !errors.Is(err, security.ErrForbidden) {
+	if _, err := service.Create(ctx, administrator(), alpr.CreateRequest{Name: "one"}); !errors.Is(err, security.ErrForbidden) {
 		t.Fatalf("Create reached the Model before the policy refusal: %v", err)
 	}
 }
@@ -190,29 +190,29 @@ func (h *recordingHandle) first(t *testing.T, verb string) recordedStatement {
 	return recordedStatement{}
 }
 
-// TestSkeletonsReturnsAWiredTenantScopedQuery holds what skeletonTable declares,
+// TestAlprsReturnsAWiredTenantScopedQuery holds what alprTable declares,
 // through what it makes the generated query do: the table it reads, a key the
 // application writes and the engine never fills, and a tenant_id taken from the
 // Grant on the way in and on the way out.
-func TestSkeletonsReturnsAWiredTenantScopedQuery(t *testing.T) {
+func TestAlprsReturnsAWiredTenantScopedQuery(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	handle := newRecordingHandle()
-	table := skeleton.Skeletons(handle).Base().Table()
-	if table.Name() != "skeletons" {
-		t.Fatalf("Skeletons table = %q, want skeletons", table.Name())
+	table := alpr.Alprs(handle).Base().Table()
+	if table.Name() != "alprs" {
+		t.Fatalf("Alprs table = %q, want alprs", table.Name())
 	}
 	if key := table.MorphModel(handle); key.GetKeyName() != "id" || key.GetKeyType() != "string" {
-		t.Fatalf("Skeletons key is %q of type %q; want id, as text", key.GetKeyName(), key.GetKeyType())
+		t.Fatalf("Alprs key is %q of type %q; want id, as text", key.GetKeyName(), key.GetKeyType())
 	}
 
-	row, err := skeleton.Skeletons(handle).New()
+	row, err := alpr.Alprs(handle).New()
 	if err != nil {
 		t.Fatalf("building a row: %v", err)
 	}
 	if row.Table() != table {
-		t.Fatal("Skeletons returned an entity whose embedded Model is not wired to its table")
+		t.Fatal("Alprs returned an entity whose embedded Model is not wired to its table")
 	}
 
 	// The key is application-generated text: the insert carries the one the row
@@ -220,7 +220,7 @@ func TestSkeletonsReturnsAWiredTenantScopedQuery(t *testing.T) {
 	// would go through the processor, which runs on no database here, and a key
 	// the model generated would replace the one the service wrote.
 	row.ID = "record-1"
-	if _, err := row.Save(ctx, security.SystemGrant(skeleton.SkeletonCreate, "acme")); err != nil {
+	if _, err := row.Save(ctx, security.SystemGrant(alpr.AlprCreate, "acme")); err != nil {
 		t.Fatalf("saving through the recording handle: %v", err)
 	}
 	insert := handle.first(t, "insert")
@@ -232,7 +232,7 @@ func TestSkeletonsReturnsAWiredTenantScopedQuery(t *testing.T) {
 	}
 
 	// And the tenant column scopes a read by the Grant's tenant.
-	if _, err := skeleton.Skeletons(handle).WhereKey("record-1").First(ctx, security.SystemGrant(skeleton.SkeletonView, "acme")); err != nil {
+	if _, err := alpr.Alprs(handle).WhereKey("record-1").First(ctx, security.SystemGrant(alpr.AlprView, "acme")); err != nil {
 		t.Fatalf("reading through the recording handle: %v", err)
 	}
 	read := handle.first(t, "select")
@@ -248,7 +248,7 @@ func TestSkeletonsReturnsAWiredTenantScopedQuery(t *testing.T) {
 func TestTheMissingRecordIsTheModelsNotFound(t *testing.T) {
 	t.Parallel()
 
-	if !errors.Is(skeleton.ErrNotFound, model.ErrModelNotFound) {
+	if !errors.Is(alpr.ErrNotFound, model.ErrModelNotFound) {
 		t.Fatal("ErrNotFound does not wrap model.ErrModelNotFound, so the router would answer a missing record with 500")
 	}
 }
@@ -258,8 +258,8 @@ func TestASystemGrantWithoutATenantReachesNothing(t *testing.T) {
 
 	// A system grant with no tenant names no customer. The Model refuses it
 	// while preparing the query, before the nil handle can issue a statement.
-	_, err := skeleton.Skeletons(nilHandle()).WhereKey("record-1").First(
-		context.Background(), security.SystemGrant(skeleton.SkeletonView, ""))
+	_, err := alpr.Alprs(nilHandle()).WhereKey("record-1").First(
+		context.Background(), security.SystemGrant(alpr.AlprView, ""))
 	if !errors.Is(err, model.ErrNoTenant) {
 		t.Fatalf("a system grant with no tenant returned %v, want ErrNoTenant", err)
 	}
@@ -268,7 +268,7 @@ func TestASystemGrantWithoutATenantReachesNothing(t *testing.T) {
 func TestTheTenantComesFromTheGrant(t *testing.T) {
 	t.Parallel()
 
-	g := security.SystemGrant(skeleton.SkeletonView, "acme")
+	g := security.SystemGrant(alpr.AlprView, "acme")
 	if got := data.Tenant(g); got != "acme" {
 		t.Fatalf("data.Tenant(g) = %q, want %q", got, "acme")
 	}
@@ -284,13 +284,13 @@ func TestTheTenantComesFromTheGrant(t *testing.T) {
 func TestTheRequestValidatesItsInput(t *testing.T) {
 	t.Parallel()
 
-	if errs := (skeleton.CreateRequest{}).Validate(); !errs.Any() {
+	if errs := (alpr.CreateRequest{}).Validate(); !errs.Any() {
 		t.Fatal("an empty request validated")
 	}
-	if errs := (skeleton.CreateRequest{Name: strings.Repeat("a", 121)}).Validate(); !errs.Any() {
+	if errs := (alpr.CreateRequest{Name: strings.Repeat("a", 121)}).Validate(); !errs.Any() {
 		t.Fatal("a name past the maximum validated")
 	}
-	if errs := (skeleton.CreateRequest{Name: "one"}).Validate(); errs.Any() {
+	if errs := (alpr.CreateRequest{Name: "one"}).Validate(); errs.Any() {
 		t.Fatalf("a valid request was rejected: %v", errs)
 	}
 }
@@ -298,9 +298,9 @@ func TestTheRequestValidatesItsInput(t *testing.T) {
 func TestTheConfigurationRefusesWhatCannotWork(t *testing.T) {
 	t.Parallel()
 
-	for name, cfg := range map[string]skeleton.Config{
-		"relative prefix":    {Prefix: "skeleton"},
-		"page size too big":  {PageSize: skeleton.MaxPageSize + 1},
+	for name, cfg := range map[string]alpr.Config{
+		"relative prefix":    {Prefix: "alpr"},
+		"page size too big":  {PageSize: alpr.MaxPageSize + 1},
 		"negative page size": {PageSize: -1},
 	} {
 		if err := cfg.Validate(); err == nil {
@@ -311,7 +311,7 @@ func TestTheConfigurationRefusesWhatCannotWork(t *testing.T) {
 	// The zero value is the configuration an application that changes nothing
 	// writes, and it has to be one New accepts: there is no tenant to name,
 	// because every tenant comes from the Grant.
-	if err := (skeleton.Config{}).Validate(); err != nil {
+	if err := (alpr.Config{}).Validate(); err != nil {
 		t.Fatalf("the zero configuration was refused: %v", err)
 	}
 }

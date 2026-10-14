@@ -1,4 +1,4 @@
-package skeleton
+package alpr
 
 import (
 	"context"
@@ -17,15 +17,15 @@ const (
 	maxLimit     = 200
 )
 
-// sortableSkeleton is the ordering allowlist. A column name taken directly
+// sortableAlpr is the ordering allowlist. A column name taken directly
 // from a request would turn ordering into an injection surface.
-var sortableSkeleton = map[string]string{
+var sortableAlpr = map[string]string{
 	"":           "created_at",
 	"name":       "name",
 	"created_at": "created_at",
 }
 
-// SkeletonService orchestrates the use cases of this package: it validates the
+// AlprService orchestrates the use cases of this package: it validates the
 // request, asks the policy for a Grant, applies the rules the entity holds for
 // itself, and persists with that Grant.
 //
@@ -37,14 +37,14 @@ var sortableSkeleton = map[string]string{
 // Everything a handler is allowed to do goes through here. The service is the
 // only owner of the database handle, so the request layer cannot reach a Model
 // before the policy has answered.
-type SkeletonService struct {
+type AlprService struct {
 	db     *data.DB
-	policy SkeletonPolicy
+	policy AlprPolicy
 }
 
-// NewSkeletonService wires the service over the application's database handle.
-func NewSkeletonService(db *data.DB) *SkeletonService {
-	return &SkeletonService{db: db}
+// NewAlprService wires the service over the application's database handle.
+func NewAlprService(db *data.DB) *AlprService {
+	return &AlprService{db: db}
 }
 
 // CreateRequest is the input contract.
@@ -75,14 +75,14 @@ var _ validation.Validatable = CreateRequest{}
 // The candidate is authorized before it is stored, and the candidate is what
 // the policy sees -- so a rule about what may be created is a rule about the
 // record being created, and not about the person alone.
-func (s *SkeletonService) Create(ctx context.Context, actor security.Subject, in CreateRequest) (*Skeleton, error) {
+func (s *AlprService) Create(ctx context.Context, actor security.Subject, in CreateRequest) (*Alpr, error) {
 	if errs := in.Validate(); errs.Any() {
 		return nil, errs
 	}
 
-	proposed := Skeleton{Name: in.Name}
+	proposed := Alpr{Name: in.Name}
 
-	g, err := security.Authorize(ctx, s.policy, actor, SkeletonCreate, proposed)
+	g, err := security.Authorize(ctx, s.policy, actor, AlprCreate, proposed)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func (s *SkeletonService) Create(ctx context.Context, actor security.Subject, in
 	// The row is built by the query so it is wired to its table, and its fields
 	// are assigned one by one: copying proposed over it would replace the
 	// embedded model with the unwired one of a struct literal.
-	candidate, err := Skeletons(s.db).New()
+	candidate, err := Alprs(s.db).New()
 	if err != nil {
 		return nil, err
 	}
@@ -119,13 +119,13 @@ func (s *SkeletonService) Create(ctx context.Context, actor security.Subject, in
 //
 // The read itself is already scoped by data.Tenant, so the second call is not
 // what keeps customers apart. It is what keeps the policy honest.
-func (s *SkeletonService) Find(ctx context.Context, actor security.Subject, id string) (*Skeleton, error) {
-	g, err := security.Authorize(ctx, s.policy, actor, SkeletonView, Skeleton{})
+func (s *AlprService) Find(ctx context.Context, actor security.Subject, id string) (*Alpr, error) {
+	g, err := security.Authorize(ctx, s.policy, actor, AlprView, Alpr{})
 	if err != nil {
 		return nil, err
 	}
 
-	record, err := Skeletons(s.db).WhereKey(id).First(ctx, g)
+	record, err := Alprs(s.db).WhereKey(id).First(ctx, g)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func (s *SkeletonService) Find(ctx context.Context, actor security.Subject, id s
 		return nil, ErrNotFound
 	}
 
-	if _, err := security.Authorize(ctx, s.policy, actor, SkeletonView, *record); err != nil {
+	if _, err := security.Authorize(ctx, s.policy, actor, AlprView, *record); err != nil {
 		return nil, err
 	}
 	return record, nil
@@ -150,15 +150,15 @@ func (s *SkeletonService) Find(ctx context.Context, actor security.Subject, id s
 // A rule that hides individual records from a listing belongs in the statement,
 // as a predicate, and the action here is what decides whether the listing may
 // run at all.
-func (s *SkeletonService) List(ctx context.Context, actor security.Subject, q data.Query) ([]*Skeleton, error) {
-	g, err := security.Authorize(ctx, s.policy, actor, SkeletonList, Skeleton{})
+func (s *AlprService) List(ctx context.Context, actor security.Subject, q data.Query) ([]*Alpr, error) {
+	g, err := security.Authorize(ctx, s.policy, actor, AlprList, Alpr{})
 	if err != nil {
 		return nil, err
 	}
 
-	column, ok := sortableSkeleton[q.Sort]
+	column, ok := sortableAlpr[q.Sort]
 	if !ok {
-		return nil, fmt.Errorf("skeleton: sort field not allowed: %q", q.Sort)
+		return nil, fmt.Errorf("alpr: sort field not allowed: %q", q.Sort)
 	}
 
 	limit := q.Limit
@@ -169,18 +169,18 @@ func (s *SkeletonService) List(ctx context.Context, actor security.Subject, q da
 		limit = maxLimit
 	}
 
-	page := Skeletons(s.db)
+	page := Alprs(s.db)
 	if q.Cursor != "" {
-		anchor, err := Skeletons(s.db).WhereKey(q.Cursor).Value(ctx, g, column)
+		anchor, err := Alprs(s.db).WhereKey(q.Cursor).Value(ctx, g, column)
 		if err != nil {
 			return nil, err
 		}
 		if anchor == nil {
 			return nil, nil
 		}
-		page = page.Where(func(after *SkeletonQuery) {
+		page = page.Where(func(after *AlprQuery) {
 			after.Where(column, ">", anchor).
-				OrWhere(func(equal *SkeletonQuery) {
+				OrWhere(func(equal *AlprQuery) {
 					equal.Where(column, "=", anchor).Where("id", ">", q.Cursor)
 				})
 		})

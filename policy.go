@@ -1,4 +1,4 @@
-package skeleton
+package alpr
 
 import (
 	"context"
@@ -7,26 +7,26 @@ import (
 	"github.com/arandu-io/framework/security"
 )
 
-// The actions of Skeleton. Constants rather than strings at the call site: a
+// The actions of Alpr. Constants rather than strings at the call site: a
 // typo in an action name would silently authorize nothing, or worse, everything.
 //
 // They carry the entity in the name because an application registers many
 // packages, and the name of an action shows up in logs and in audit trails
 // where "view" on its own says nothing about what was viewed.
 const (
-	// SkeletonView is reading one record.
-	SkeletonView security.Action = "skeleton.view"
-	// SkeletonList is paging through the records.
-	SkeletonList security.Action = "skeleton.list"
-	// SkeletonCreate is adding one.
-	SkeletonCreate security.Action = "skeleton.create"
-	// SkeletonUpdate is changing one.
-	SkeletonUpdate security.Action = "skeleton.update"
-	// SkeletonDelete is removing one.
-	SkeletonDelete security.Action = "skeleton.delete"
+	// AlprView is reading one record.
+	AlprView security.Action = "alpr.view"
+	// AlprList is paging through the records.
+	AlprList security.Action = "alpr.list"
+	// AlprCreate is adding one.
+	AlprCreate security.Action = "alpr.create"
+	// AlprUpdate is changing one.
+	AlprUpdate security.Action = "alpr.update"
+	// AlprDelete is removing one.
+	AlprDelete security.Action = "alpr.delete"
 )
 
-// SkeletonPolicy is the only authority over who does what with a Skeleton.
+// AlprPolicy is the only authority over who does what with a Alpr.
 //
 // IT DENIES EVERYTHING, and that is the state to start from rather than a
 // placeholder to delete. A policy shipped with a branch that allows every
@@ -36,18 +36,18 @@ const (
 // There is deliberately no such branch to remove. Open one action at a time,
 // inside the custom block below, saying who may take it and on which record --
 // what is not written there stays closed, including every action added later.
-type SkeletonPolicy struct{}
+type AlprPolicy struct{}
 
 // Compile-time proof that the policy answers about this entity and no other. A
 // policy that drifted onto another type would leave this one unguarded while
 // the Model path still compiled.
-var _ security.Policy[Skeleton] = SkeletonPolicy{}
+var _ security.Policy[Alpr] = AlprPolicy{}
 
 // Can decides whether the subject may perform the action on the record.
 //
 // It is the only place that decides. The service reaches the Model only after
 // Authorize turns this method's nil result into a Grant.
-func (SkeletonPolicy) Can(ctx context.Context, s security.Subject, a security.Action, record Skeleton) error {
+func (AlprPolicy) Can(ctx context.Context, s security.Subject, a security.Action, record Alpr) error {
 	// Tenant isolation comes first and applies to every action. Without it every
 	// check below would be pointless in a multi-tenant system: a rule that
 	// allows an owner to read their own record would allow it across customers
@@ -56,14 +56,14 @@ func (SkeletonPolicy) Can(ctx context.Context, s security.Subject, a security.Ac
 	// The empty id is the candidate that has not been stored yet, which belongs
 	// to nobody until it is written with the tenant off the Grant.
 	if record.ID != "" && record.TenantID != s.Tenant {
-		return fmt.Errorf("skeleton belongs to another tenant")
+		return fmt.Errorf("alpr belongs to another tenant")
 	}
 
 	// arandu:begin custom
 	// The rules of this package go here, one action at a time. A rule that
 	// depends on the record and not only on the role is written the same way:
 	//
-	//	if a == SkeletonView && (s.ID == record.ID || s.HasRole("admin")) {
+	//	if a == AlprView && (s.ID == record.ID || s.HasRole("admin")) {
 	//		return nil
 	//	}
 	//
@@ -74,10 +74,10 @@ func (SkeletonPolicy) Can(ctx context.Context, s security.Subject, a security.Ac
 	// explicitly or it falls through to the refusal below, which is the safe
 	// direction:
 	//
-	//	if a == SkeletonView && s.IsGuest() && record.Published {
+	//	if a == AlprView && s.IsGuest() && record.Published {
 	//		return nil
 	//	}
 	// arandu:end custom
 
-	return fmt.Errorf("no rule allows %s on skeleton", a)
+	return fmt.Errorf("no rule allows %s on alpr", a)
 }

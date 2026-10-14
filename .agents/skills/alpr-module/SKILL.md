@@ -1,6 +1,6 @@
 ---
-name: skeleton-module
-description: Change what this Arandu package registers — its routes, handlers, configuration, response shape or schema. Use when the request is to "add a route", "add an endpoint", "add a handler", "add a config option", "change the prefix", "add a field to the response", "add a column", "write a migration", "return the tenant id too", "add a background job to the package", "make it run something at boot", "add a scope", "add a rule to the entity", "regenerate the query", "who is the current user in a handler", "return 404", or when a change touches module.go, config.go, model.go or SkeletonQuery.go. Covers foundation.Module and the five optional interfaces beside it, why handlers are thin, the RequireAuth guard and ctx.User, returning errors for the router to answer, the generated query and aru model:build, where the rules of the entity live, the migration name that carries the order, and what Resource is for.
+name: alpr-module
+description: Change what this Arandu package registers — its routes, handlers, configuration, response shape or schema. Use when the request is to "add a route", "add an endpoint", "add a handler", "add a config option", "change the prefix", "add a field to the response", "add a column", "write a migration", "return the tenant id too", "add a background job to the package", "make it run something at boot", "add a scope", "add a rule to the entity", "regenerate the query", "who is the current user in a handler", "return 404", or when a change touches module.go, config.go, model.go or AlprQuery.go. Covers foundation.Module and the five optional interfaces beside it, why handlers are thin, the RequireAuth guard and ctx.User, returning errors for the router to answer, the generated query and aru model:build, where the rules of the entity live, the migration name that carries the order, and what Resource is for.
 license: MIT
 ---
 
@@ -53,7 +53,7 @@ application's own tree and never opens an installed package.
 **1. Register it in `Routes`, with a name.**
 
 ```go
-	r.Action(stdhttp.MethodDelete, m.cfg.Prefix+"/{id}", m.destroy).Name("skeleton.destroy")
+	r.Action(stdhttp.MethodDelete, m.cfg.Prefix+"/{id}", m.destroy).Name("alpr.destroy")
 ```
 
 Below the line that is already there, and nowhere above it:
@@ -101,8 +101,8 @@ what it is handed, so a nil resource panics inside the framework rather than
 answering 204.
 
 No rule and no Model construction lives in a handler. A handler that held the
-database or called `Skeletons` would bypass the only place the Policy is
-guaranteed to run. Read `skeleton-policy` before writing the Service method.
+database or called `Alprs` would bypass the only place the Policy is
+guaranteed to run. Read `alpr-policy` before writing the Service method.
 
 **3. Return the error; the router answers it.** The handler writes `return err`
 and nothing else with what the service returned. The framework's action adapter
@@ -156,18 +156,18 @@ statement is the one on the Grant, which came from the session of whoever is
 signed in. A public route that wants to know who is looking without requiring a
 session mounts `middleware.LoadSubject` instead, and a reader the package means
 to serve without any session is a `security.Guest` the code declares on purpose
-— open it in the policy first, as `skeleton-policy` says.
+— open it in the policy first, as `alpr-policy` says.
 
 ## Changing the Model
 
-`Skeleton` embeds `model.Model`, and `skeletonTable` declares its table once,
+`Alpr` embeds `model.Model`, and `alprTable` declares its table once,
 beside it in `model.go`. Keep the application-generated key and the tenant
 default visible there:
 
 ```go
-var skeletonTable = model.NewTable(model.TableSpec{
-	Name:      "skeletons",
-	New:       func() model.Entity { return new(Skeleton) },
+var alprTable = model.NewTable(model.TableSpec{
+	Name:      "alprs",
+	New:       func() model.Entity { return new(Alpr) },
 	ManualKey: true,
 })
 ```
@@ -178,8 +178,8 @@ package owns tenant data. Model terminals require a Grant and apply `tenant_id`;
 the Service still calls `security.Authorize` first because the Model does not
 decide which Policy action the Grant represents.
 
-`SkeletonQuery.go` is generated from that declaration: `Skeletons(db)`, the
-`*SkeletonQuery` it returns, and `SkeletonCollection`. It is never edited by
+`AlprQuery.go` is generated from that declaration: `Alprs(db)`, the
+`*AlprQuery` it returns, and `AlprCollection`. It is never edited by
 hand. After changing the struct or the table, run
 
 ```sh
@@ -189,7 +189,7 @@ aru model:build
 and commit what it rewrote. `aru model:build --check` writes nothing and exits 1
 when the file is missing, stale or hand-edited.
 
-Every query starts at `Skeletons(s.db)`. The constructor returns one mutable
+Every query starts at `Alprs(s.db)`. The constructor returns one mutable
 query, so a second chain begun from a value held in a variable carries the
 clauses of the first — and compiles.
 
@@ -209,12 +209,12 @@ protects come as a pair:
 // arandu:begin custom
 
 // CanRename reports whether the record may take this name.
-func (s Skeleton) CanRename(name string) bool { return name != "" && name != s.Name }
+func (s Alpr) CanRename(name string) bool { return name != "" && name != s.Name }
 
 // Rename gives the record a new name, and refuses one it cannot take.
-func (s *Skeleton) Rename(name string) error {
+func (s *Alpr) Rename(name string) error {
 	if !s.CanRename(name) {
-		return fmt.Errorf("skeleton: %q cannot be the new name of this record", name)
+		return fmt.Errorf("alpr: %q cannot be the new name of this record", name)
 	}
 	s.Name = name
 	return nil
@@ -223,12 +223,12 @@ func (s *Skeleton) Rename(name string) error {
 // arandu:end custom
 ```
 
-A local scope is a method on `*SkeletonQuery` in the same block, and a relation
-is registered on `skeletonTable` from an `init` function:
+A local scope is a method on `*AlprQuery` in the same block, and a relation
+is registered on `alprTable` from an `init` function:
 
 ```go
 // Named narrows the query to the records with this name.
-func (q *SkeletonQuery) Named(name string) *SkeletonQuery {
+func (q *AlprQuery) Named(name string) *AlprQuery {
 	return q.Where("name", "=", name)
 }
 ```
@@ -271,7 +271,7 @@ if the field can make `New` fail.
 
 `Resource` and `Collection` in `model.go` are declared snapshots, not direct
 encoding of the entity. This also defines the safe copy boundary: Model-backed
-Service results stay as `*Skeleton`/`[]*Skeleton`, because a copied row keeps
+Service results stay as `*Alpr`/`[]*Alpr`, because a copied row keeps
 the model of the original and refuses to be written. A response snapshot reads
 only the explicit fields and cannot be saved.
 
@@ -307,7 +307,7 @@ Append it to the slice `Migrations()` returns, and give it a name that sorts
 after the last one:
 
 ```go
-func (createSkeletons) GetName() string { return "20260823_0001_create_skeletons" }
+func (createAlprs) GetName() string { return "20260823_0001_create_alprs" }
 ```
 
 **The name carries the order and nothing else does.** `TestTheModuleDeclaresItsSchema`

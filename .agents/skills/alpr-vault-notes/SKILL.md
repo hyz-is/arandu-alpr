@@ -1,5 +1,5 @@
 ---
-name: skeleton-vault-notes
+name: alpr-vault-notes
 description: Write the Obsidian vault notes that record this module, when the checkout sits inside the Arandu vault. Use when the request is to "write the note", "record this in the vault", "update the journal", "open a gap", "document the module", "add it to the index", "the audit is failing", "layer=... is not in the schema", "which folder does this note go in", or when a change to this package closed or opened a defect somebody else has to know about. Covers how to tell you are in the vault, where a module note lives, which layer a defect belongs to, what the day note has to say, and the one instrument that decides whether any of it was written correctly.
 license: MIT
 ---

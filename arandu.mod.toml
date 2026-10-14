@@ -5,7 +5,7 @@
 # calls and then holds an HTTP client is rejected, which is what makes the
 # four lines below worth reading before installing anything.
 
-name = ":author_username/:module_slug"
+name = "hyz-is/alpr"
 framework = ">= 0.56"
 profiles = ["conventional", "performance"]
 
@@ -16,6 +16,6 @@ network = false
 filesystem = false
 # It runs no other program.
 exec = false
-# module.go owns the skeletons table, so whoever installs this has to run
+# module.go owns the alprs table, so whoever installs this has to run
 # `aru migrate`. Declaring it is how they find that out before deploying.
 migrations = true

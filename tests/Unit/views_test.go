@@ -15,7 +15,7 @@ import (
 	"github.com/arandu-io/framework/security"
 	"github.com/arandu-io/hesape/view"
 
-	skeleton "github.com/arandu-io/package-skeleton"
+	alpr "github.com/hyz-is/arandu-alpr"
 )
 
 // How a view of this package reaches a page, and why there is only one way.
@@ -40,11 +40,11 @@ import (
 // environment.
 const sessionKey = "0123456789abcdef0123456789abcdef"
 
-func module(t *testing.T) *skeleton.Module {
+func module(t *testing.T) *alpr.Module {
 	t.Helper()
 
 	sessions := security.NewSessionStore([]byte(sessionKey), time.Hour, false, security.NewMemoryBackend())
-	m, err := skeleton.New(skeleton.Config{}, data.Wrap(nil, data.DialectSQLite), sessions)
+	m, err := alpr.New(alpr.Config{}, data.Wrap(nil, data.DialectSQLite), sessions)
 	if err != nil {
 		t.Fatalf("building the module: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestThePublicationLandsWhereTheModuleSaysItDoes(t *testing.T) {
 	}
 
 	slices.Sort(targets)
-	if want := skeleton.PublishedPaths(); !slices.Equal(targets, want) {
+	if want := alpr.PublishedPaths(); !slices.Equal(targets, want) {
 		t.Errorf("the publication writes %v, and the module checks %v", targets, want)
 	}
 }
@@ -142,7 +142,7 @@ func TestEveryPublishedFileLandsUnderTheModuleNamespace(t *testing.T) {
 	m := module(t)
 	prefix := "resources/views/modules/" + m.Name() + "/"
 
-	paths := skeleton.PublishedPaths()
+	paths := alpr.PublishedPaths()
 	if len(paths) == 0 {
 		t.Fatal("the package publishes nothing, so every check below would pass by having nothing to read")
 	}
@@ -163,8 +163,8 @@ func TestEveryPublishedFileLandsUnderTheModuleNamespace(t *testing.T) {
 func TestTheNameAViewIsRenderedByComesFromItsPath(t *testing.T) {
 	t.Parallel()
 
-	paths := skeleton.PublishedPaths()
-	names := skeleton.ViewNames()
+	paths := alpr.PublishedPaths()
+	names := alpr.ViewNames()
 	if len(names) != len(paths) {
 		t.Fatalf("%d view(s) published and %d name(s) declared", len(paths), len(names))
 	}
@@ -176,7 +176,7 @@ func TestTheNameAViewIsRenderedByComesFromItsPath(t *testing.T) {
 		}
 	}
 
-	packages := skeleton.ViewPackages()
+	packages := alpr.ViewPackages()
 	if len(packages) == 0 {
 		t.Fatal("the views compile into no package, so there is no import that would link them")
 	}
@@ -207,7 +207,7 @@ func TestTheModuleRefusesToBootUntilItsViewsAreLinked(t *testing.T) {
 	m := module(t)
 	ctx := context.Background()
 
-	names := skeleton.ViewNames()
+	names := alpr.ViewNames()
 	if len(names) == 0 {
 		t.Fatal("the package declares no view, so neither half of this test would prove anything")
 	}
@@ -221,10 +221,10 @@ func TestTheModuleRefusesToBootUntilItsViewsAreLinked(t *testing.T) {
 			t.Errorf("the refusal does not name the missing view %s: %v", name, err)
 		}
 	}
-	if !strings.Contains(err.Error(), skeleton.PublishCommand) {
+	if !strings.Contains(err.Error(), alpr.PublishCommand) {
 		t.Errorf("the refusal does not say how to publish the views: %v", err)
 	}
-	for _, pkg := range skeleton.ViewPackages() {
+	for _, pkg := range alpr.ViewPackages() {
 		if !strings.Contains(err.Error(), pkg) {
 			t.Errorf("the refusal does not name %s, the package whose import links the views: %v", pkg, err)
 		}
@@ -256,7 +256,7 @@ func TestThePackageShipsNoCommandOfItsOwn(t *testing.T) {
 	for _, source := range productionGoFiles(t, packageRoot(t)) {
 		if source.file.Name.Name == "main" && buildable(source.file) {
 			t.Errorf("%s is a command this module carries; what a package publishes is declared, and %s writes it",
-				source.path, skeleton.PublishCommand)
+				source.path, alpr.PublishCommand)
 		}
 	}
 }

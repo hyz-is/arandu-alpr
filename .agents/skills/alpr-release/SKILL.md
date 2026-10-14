@@ -1,5 +1,5 @@
 ---
-name: skeleton-release
+name: alpr-release
 description: Get this Arandu package green, declared and published. Use when the request is to "run the gates", "check it builds", "the tests fail", "go build says the directory prefix does not contain modules listed in go.work", "aru doctor says this is not an Arandu project", "update arandu.mod.toml", "add a dependency", "bump the framework", "tag a release", "publish it", "go get cannot find the module", "write the changelog", or before opening a pull request. Covers the four gates and why each filter is there, what the manifest declares and who checks it, the immutability of a published module version, and what breaks somebody else's build.
 license: MIT
 ---
@@ -38,7 +38,7 @@ project: no go.mod, main.go and arandu.toml together"* — it reads applications
 and this is a library.
 
 `aru model:build` is different: it works on a module root, and it is what wrote
-`SkeletonQuery.go`. Run it after any change to the entity, and before a release
+`AlprQuery.go`. Run it after any change to the entity, and before a release
 
 ```sh
 aru model:build --check
@@ -66,7 +66,7 @@ inside and never loads a dependency, so the manifest of an installed package is
 opened by nothing but that package's own suite.
 
 ```toml
-name = ":author_username/:module_slug"
+name = "hyz-is/alpr"
 framework = ">= 0.56"
 profiles = ["conventional", "performance"]
 
@@ -133,12 +133,6 @@ Before tagging:
 - `arandu.mod.toml` matches the code;
 - `CHANGELOG.md` has the entry, under the version, in the Keep a Changelog
   sections — `Added`, `Changed`, `Fixed`, `Removed`.
-<!-- configure:template-start -->
-- nothing in the tree still carries a template placeholder, and `configure.go`
-  has deleted itself. The CI job named `configure` asserts both on a clean
-  clone, so the check has already run — but it runs on a clone, not on this
-  working tree.
-<!-- configure:template-end -->
 
 While the version starts with `v0.`, breaking is allowed — freezing a shape this
 early is worse. Breaking *quietly* is not. A field that stops existing is a
@@ -149,8 +143,8 @@ it is, and what they have to write instead.
 Run `apidiff` against the release baseline and enumerate every removal; the CI
 step named `api diff against the last release` fails unless `UPGRADE.md` names
 each one. A move to a new shape of the model breaks more than its own
-signatures: `Skeletons` changing what it returns is one line, and every method
-the old embedded model promoted on `*Skeleton` that the new one does not is
+signatures: `Alprs` changing what it returns is one line, and every method
+the old embedded model promoted on `*Alpr` that the new one does not is
 another, each named on its own. Keeping `ErrNotFound` in `model.go` is not a
 removal just because its value changed.
 

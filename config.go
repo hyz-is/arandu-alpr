@@ -1,4 +1,4 @@
-package skeleton
+package alpr
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 const (
 	// DefaultPrefix is where the routes are mounted when Config leaves Prefix
 	// empty.
-	DefaultPrefix = "/skeleton"
+	DefaultPrefix = "/alpr"
 	// DefaultPageSize is how many records one page answers with when Config
 	// leaves PageSize at zero.
 	DefaultPageSize = 25
@@ -50,7 +50,7 @@ type Config struct {
 // where it is wired rather than on the first request that needed it.
 func (c Config) Validate() error {
 	if c.Prefix != "" && c.Prefix[0] != '/' {
-		return fmt.Errorf("skeleton: Config.Prefix is %q and has to start with /", c.Prefix)
+		return fmt.Errorf("alpr: Config.Prefix is %q and has to start with /", c.Prefix)
 	}
 	if c.Prefix != "" {
 		if err := validateRoutePrefix(c.Prefix); err != nil {
@@ -58,7 +58,7 @@ func (c Config) Validate() error {
 		}
 	}
 	if c.PageSize < 0 || c.PageSize > MaxPageSize {
-		return fmt.Errorf("skeleton: Config.PageSize is %d, and has to be between 0 and %d, where 0 means %d", c.PageSize, MaxPageSize, DefaultPageSize)
+		return fmt.Errorf("alpr: Config.PageSize is %d, and has to be between 0 and %d, where 0 means %d", c.PageSize, MaxPageSize, DefaultPageSize)
 	}
 	return nil
 }
@@ -70,7 +70,7 @@ func (c Config) Validate() error {
 func validateRoutePrefix(prefix string) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = fmt.Errorf("skeleton: Config.Prefix %q cannot be registered as a route path", prefix)
+			err = fmt.Errorf("alpr: Config.Prefix %q cannot be registered as a route path", prefix)
 		}
 	}()
 

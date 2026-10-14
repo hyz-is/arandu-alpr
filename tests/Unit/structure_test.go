@@ -23,7 +23,7 @@ func TestTheApplicationIntegrationHasOneCompositionFile(t *testing.T) {
 	root := packageRoot(t)
 	guides := []string{
 		"README.md",
-		".agents/skills/skeleton-package/SKILL.md",
+		".agents/skills/alpr-package/SKILL.md",
 	}
 	bootstrapFile := regexp.MustCompile(`bootstrap/[A-Za-z0-9_.-]+\.go`)
 
@@ -34,7 +34,7 @@ func TestTheApplicationIntegrationHasOneCompositionFile(t *testing.T) {
 		}
 
 		text := string(body)
-		for _, required := range []string{"bootstrap/app.go", ":module_slug.New(", "k.Register"} {
+		for _, required := range []string{"bootstrap/app.go", "alpr.New(", "k.Register"} {
 			if !strings.Contains(text, required) {
 				t.Errorf("%s no longer teaches the explicit composition step %q", guide, required)
 			}
@@ -112,27 +112,27 @@ func TestThePackageUsesTheGeneratedConcreteModel(t *testing.T) {
 	wants := map[string][]string{
 		"model.go": {
 			`"github.com/arandu-io/hesape/database/model"`,
-			"type Skeleton struct {\n\tmodel.Model\n",
-			"var skeletonTable = model.NewTable(model.TableSpec{",
+			"type Alpr struct {\n\tmodel.Model\n",
+			"var alprTable = model.NewTable(model.TableSpec{",
 			"ManualKey: true,",
 			"// arandu:begin custom\n",
 			"// arandu:end custom\n",
 		},
-		"SkeletonQuery.go": {
+		"AlprQuery.go": {
 			generatedHeading,
-			"func Skeletons(db model.DB) *SkeletonQuery",
-			"type SkeletonCollection []*Skeleton",
+			"func Alprs(db model.DB) *AlprQuery",
+			"type AlprCollection []*Alpr",
 		},
 		"service.go": {
 			"db     *data.DB",
-			"func NewSkeletonService(db *data.DB) *SkeletonService",
-			"Skeletons(s.db).New()",
-			"Skeletons(s.db).WhereKey(",
-			") (*Skeleton, error)",
-			") ([]*Skeleton, error)",
+			"func NewAlprService(db *data.DB) *AlprService",
+			"Alprs(s.db).New()",
+			"Alprs(s.db).WhereKey(",
+			") (*Alpr, error)",
+			") ([]*Alpr, error)",
 		},
 		"module.go": {
-			"NewSkeletonService(db)",
+			"NewAlprService(db)",
 		},
 	}
 	for path, required := range wants {
@@ -172,8 +172,8 @@ func TestThePackageUsesTheGeneratedConcreteModel(t *testing.T) {
 				t.Errorf("%s still spells the generic model layer %q", filepath.ToSlash(relative), stale)
 			}
 		}
-		if relative != "SkeletonQuery.go" && strings.Contains(string(body), generatedHeading) {
-			t.Errorf("%s carries the heading of the generated query, which only SkeletonQuery.go may", filepath.ToSlash(relative))
+		if relative != "AlprQuery.go" && strings.Contains(string(body), generatedHeading) {
+			t.Errorf("%s carries the heading of the generated query, which only AlprQuery.go may", filepath.ToSlash(relative))
 		}
 		return nil
 	})
@@ -191,18 +191,18 @@ func TestTheGuidesTeachTheGeneratedModelBoundary(t *testing.T) {
 
 	root := packageRoot(t)
 	guides := map[string][]string{
-		"AGENTS.md":                {"Skeletons(db)", "security.Authorize"},
-		"README.md":                {"Skeletons(db)", "SkeletonQuery", "aru model:build", "RequireAuth"},
-		"CONTRIBUTING.md":          {"Skeletons(db)", "authorizes before reaching the Model", "aru model:build"},
-		"SECURITY.md":              {"Model terminal", "data.Tenant(g)"},
-		".agents/skills/README.md": {"SkeletonQuery", "custom block"},
-		".agents/skills/skeleton-module/SKILL.md":  {"skeletonTable", "ctx.User()", "RequireAuth", "return err"},
-		".agents/skills/skeleton-policy/SKILL.md":  {"security.Authorize", "Skeletons(s.db).New()"},
-		".agents/skills/skeleton-release/SKILL.md": {"model:build --check", "configured copy"},
-		".agents/skills/skeleton-package/SKILL.md": {"RequireAuth", "/auth/login"},
+		"AGENTS.md":                            {"Alprs(db)", "security.Authorize"},
+		"README.md":                            {"Alprs(db)", "AlprQuery", "aru model:build", "RequireAuth"},
+		"CONTRIBUTING.md":                      {"Alprs(db)", "authorizes before reaching the Model", "aru model:build"},
+		"SECURITY.md":                          {"Model terminal", "data.Tenant(g)"},
+		".agents/skills/README.md":             {"AlprQuery", "custom block"},
+		".agents/skills/alpr-module/SKILL.md":  {"alprTable", "ctx.User()", "RequireAuth", "return err"},
+		".agents/skills/alpr-policy/SKILL.md":  {"security.Authorize", "Alprs(s.db).New()"},
+		".agents/skills/alpr-release/SKILL.md": {"model:build --check", "configured copy"},
+		".agents/skills/alpr-package/SKILL.md": {"RequireAuth", "/auth/login"},
 	}
 	retired := []string{
-		"SkeletonRepository", "NewSkeletonRepository", "repository.go  data access",
+		"AlprRepository", "NewAlprRepository", "repository.go  data access",
 		genericModel, genericBuilder, genericInstance,
 		"Model-first", "configured Model",
 		"m.answer(", "m.subject(", "Config.Tenant", "cfg.Auth.Tenant",
