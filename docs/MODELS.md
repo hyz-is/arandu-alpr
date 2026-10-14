@@ -109,7 +109,7 @@ o app — mas significa que o caminho para produção em servidor está incomple
 | `quantize_cuda_weightonly.py` num pipeline | órfão: nenhum `.sh`, `.md`, `Dockerfile` ou CI o referencia |
 
 O único portão que um `.ort` atravessa hoje é o
-[`modelcontract.go`](../app/Services/alpr/engine/onnx/modelcontract.go) deste serviço, que valida
+[`modelcontract.go`](../engine/onnx/modelcontract.go) deste serviço, que valida
 shape, nome, contagem de classes e SHA no boot — mas **não mede acurácia**. Para isso existe
 `internal/corpus/`, e ele precisa das imagens reais.
 
