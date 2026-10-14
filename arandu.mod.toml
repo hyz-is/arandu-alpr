@@ -10,12 +10,13 @@ framework = ">= 0.56"
 profiles = ["conventional", "performance"]
 
 [permissions]
-# It answers requests and reads its own rows. Nothing leaves the process.
-network = false
-# It keeps no state outside the database.
-filesystem = false
-# It runs no other program.
-exec = false
-# module.go owns the alprs table, so whoever installs this has to run
-# `aru migrate`. Declaring it is how they find that out before deploying.
-migrations = true
+# It opens the cameras: RTSP, RTSPS, HTTP and HTTPS streams, each address checked to be public
+# before every connection unless the installer allows private ones.
+network = true
+# It reads the models and the TensorRT calibration tables, and writes the compiled engines to
+# their cache directory.
+filesystem = true
+# It runs ffmpeg and ffprobe, one ffmpeg per camera, with a protocol whitelist.
+exec = true
+# It owns no table.
+migrations = false

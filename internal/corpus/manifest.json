@@ -1,0 +1,53 @@
+{
+  "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_",
+  "frames": [
+    {
+      "id": "day-clean",
+      "file": "frames/day-clean.png",
+      "sha256": "366cd90a185824014be76312a70b4b03aca60060f20506f7f49ed69902519271",
+      "width": 1280,
+      "height": 720,
+      "notes": "baseline: sharp, well lit, plate near centre"
+    },
+    {
+      "id": "black-frame",
+      "file": "frames/black-frame.png",
+      "sha256": "a1a3810ee774ee31929cbff7a52493efa26f9445c4fbd5abf0d02376b31725d6",
+      "width": 1280,
+      "height": 720,
+      "notes": "signal loss. Must produce zero readings; the capture drops it as blank before inference"
+    },
+    {
+      "id": "white-ir-stuck",
+      "file": "frames/white-ir-stuck.png",
+      "sha256": "062c4e641334f59acf54482631f0e415c1e66e206c70d8bc4315f9d4f0e3456a",
+      "width": 1280,
+      "height": 720,
+      "notes": "IR illuminator stuck on. Also blank, but at the other end of the range -- a blank check that only looks for black misses it"
+    },
+    {
+      "id": "night-ir",
+      "file": "frames/night-ir.png",
+      "sha256": "fb30a26c5143b097fcfb160321fb1c855d420632dd61cd92139f65c1776d5e87",
+      "width": 1280,
+      "height": 720,
+      "notes": "low contrast monochrome. The blur gate must not reject it for being dark"
+    },
+    {
+      "id": "motion-blur",
+      "file": "frames/motion-blur.png",
+      "sha256": "b448cf3d9407e8ab2977f4fc563b3307456b49eef4aa0dd81e39d7edfd85cdbe",
+      "width": 1280,
+      "height": 720,
+      "notes": "the blur gate's reason to exist: an unreadable crop must cost no OCR pass"
+    },
+    {
+      "id": "small-frame",
+      "file": "frames/small-frame.png",
+      "sha256": "fb662ce235a824a1c1bd787f9a7d3c0eb4c378ce3ee42efa3626dc8008dd1752",
+      "width": 640,
+      "height": 480,
+      "notes": "640x480. The letterbox pads a different axis here than on 16:9, which is where padding-colour bugs surface"
+    }
+  ]
+}

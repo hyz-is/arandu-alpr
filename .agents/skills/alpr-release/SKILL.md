@@ -37,16 +37,7 @@ whatever happens to be checked out beside you.
 project: no go.mod, main.go and arandu.toml together"* — it reads applications,
 and this is a library.
 
-`aru model:build` is different: it works on a module root, and it is what wrote
-`AlprQuery.go`. Run it after any change to the entity, and before a release
-
-```sh
-aru model:build --check
-```
-
-which writes nothing and exits 1 when the generated file is missing, stale or
-edited by hand. It needs the `aru` binary rather than the Go toolchain alone,
-which is why it sits beside the four gates and not among them.
+The package has no entity, so there is no `aru model:build` step.
 
 CI runs the same four, and so does the release workflow on the tagged archive.
 Both also run `go vet configure.go` by name while their template sections are
@@ -71,10 +62,10 @@ framework = ">= 0.56"
 profiles = ["conventional", "performance"]
 
 [permissions]
-network = false
-filesystem = false
-exec = false
-migrations = true
+network = true
+filesystem = true
+exec = true
+migrations = false
 ```
 
 `TestTheDeclaredCapabilitiesAreWhatTheCodeDoes`, in `tests/Unit/audit_test.go`,
@@ -95,8 +86,8 @@ own code; here both fail the suite, because `go test` has one outcome:
 | `permission-not-used` | warning | the manifest says `true` and nothing does it. Asking for more than you need is how a permission model erodes into everyone declaring everything |
 
 So a dependency or a call added here is a line changed in `arandu.mod.toml` in
-the same commit. `migrations = true` is the one this package already declares,
-and it is what tells an installer to run `aru migrate` before deploying.
+the same commit. This package declares network (the cameras), filesystem (the models
+and the TensorRT cache) and exec (ffmpeg), and no migrations.
 
 The `framework` line is a floor, and it is a second declaration of something
 `go.mod` already says. Move both together when you bump.
@@ -129,7 +120,6 @@ has shipped.
 Before tagging:
 
 - the four gates pass with `GOWORK=off`;
-- `aru model:build --check` finds nothing to change;
 - `arandu.mod.toml` matches the code;
 - `CHANGELOG.md` has the entry, under the version, in the Keep a Changelog
   sections — `Added`, `Changed`, `Fixed`, `Removed`.

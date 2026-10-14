@@ -10,3 +10,27 @@ a release is corrected by another release and never by moving a tag.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-13
+
+### Added
+
+- The engine of api.alpr.sh, published as a package: `alpr.NewModule` (the
+  fleet: `Boot`, `Start`, `Close`, `Health`, `Diagnose`), the quality gate,
+  deduplication and the session pool.
+- `engine/onnx`: the session builder on the process's main thread, CUDA with
+  `RequireAllCUDA`, TensorRT INT8 from a float graph and a calibration table
+  (`TensorRTConfig`), the engine cache, node placement and the model contract
+  (any square detector input, uint8 or float OCR input).
+- `source` and `streaming`: ffmpeg and ffprobe with NVDEC (`-c:v h264_cuvid
+  -gpu N`), a protocol whitelist and a public-address check before every
+  connection.
+- `camera`, `runner` and `supervisor`: one loop per camera, placement over the
+  cards, reconcile, watchdog and retries.
+- `contract`, `engine.Fake`, `imaging` and `metrics`.
+- `bench/`, `cmd/alpr-smoke` and `internal/corpus`, the measuring tools.
+
+### Requirements
+
+- Go 1.26, `CGO_ENABLED=1`, `github.com/yalue/onnxruntime_go` v1.31.0, ONNX
+  Runtime 1.27.1, TensorRT 10.14 for INT8, ffmpeg with cuvid.
+
