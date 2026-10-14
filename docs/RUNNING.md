@@ -174,7 +174,7 @@ apodrece numa pasta de imagens que ninguém tem coragem de apagar.
 
 ## Onde o serviço se encaixa
 
-`./` é Go puro — **não importa arandu**, e um teste falha se isso mudar. O
+O motor é Go puro — **não importa arandu**, e um teste falha se isso mudar. O
 acoplamento com o framework vive só em `app/Modules/alpr/`.
 
 A aplicação implementa duas interfaces e nada mais:
