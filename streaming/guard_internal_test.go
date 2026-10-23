@@ -107,3 +107,39 @@ func TestEveryRangeTheGuardNamesIsInternal(t *testing.T) {
 		}
 	}
 }
+
+func TestTheGuardReadsRTMPFromAPublicServerAndPinsIt(t *testing.T) {
+	g := Guard{Lookup: resolver(map[string]string{"stream.example.com": "203.0.113.20"})}
+	url, args, err := g.Address(context.Background(), "rtmp://stream.example.com:1935/live/cam1")
+	if err != nil {
+		t.Fatalf("a public RTMP server is refused: %v", err)
+	}
+	if url != "rtmp://203.0.113.20:1935/live/cam1" {
+		t.Fatalf("the RTMP name is not pinned to the checked address: %s", url)
+	}
+	if len(args) != 2 || !strings.Contains(args[1], "rtmp") {
+		t.Fatalf("ffmpeg is not allowed the rtmp protocol: %v", args)
+	}
+	for _, raw := range []string{"rtmp://10.0.0.5/live/x", "rtmp://127.0.0.1:1935/live/x", "rtmps://192.168.1.2/live/x"} {
+		if _, _, err := g.Address(context.Background(), raw); !errors.Is(err, ErrCameraAddress) {
+			t.Errorf("%s was let through: %v", raw, err)
+		}
+	}
+}
+
+func TestOnlyTheEnginesOwnReceiverIsTrustedOnAnInternalAddress(t *testing.T) {
+	g := Guard{Trusted: []string{"127.0.0.1:1935"}}
+	if _, _, err := g.Address(context.Background(), "rtmp://127.0.0.1:1935/live/key"); err != nil {
+		t.Fatalf("the engine's own receiver is refused: %v", err)
+	}
+	for _, raw := range []string{
+		"rtsp://127.0.0.1:1935/live/key", // trusted for rtmp only
+		"http://127.0.0.1:1935/live/key", // likewise
+		"rtmp://127.0.0.1:1936/live/key", // another port is another service
+		"rtmp://127.0.0.2:1935/live/key", // another address
+	} {
+		if _, _, err := g.Address(context.Background(), raw); !errors.Is(err, ErrCameraAddress) {
+			t.Errorf("%s was let through: %v", raw, err)
+		}
+	}
+}

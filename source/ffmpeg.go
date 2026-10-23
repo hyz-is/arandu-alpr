@@ -65,13 +65,17 @@ type Config struct {
 	// (streaming.Guard).
 	AllowPrivate bool
 
+	// Trusted names the internal host:port addresses a camera may still be read from over RTMP:
+	// the engine's own receiver, for cameras that push (streaming.Guard).
+	Trusted []string
+
 	// Lookup resolves camera host names for that check; nil uses the system resolver.
 	Lookup func(ctx context.Context, host string) ([]net.IPAddr, error)
 }
 
 func NewFFmpegDialer(cfg Config) *FFmpegDialer {
 	opener := streaming.NewOpener(cfg.MaxConcurrentOpens, cfg.Runner)
-	opener.SetGuard(streaming.Guard{AllowPrivate: cfg.AllowPrivate, Lookup: cfg.Lookup})
+	opener.SetGuard(streaming.Guard{AllowPrivate: cfg.AllowPrivate, Trusted: cfg.Trusted, Lookup: cfg.Lookup})
 	return &FFmpegDialer{opener: opener, cfg: cfg}
 }
 

@@ -10,6 +10,15 @@ a release is corrected by another release and never by moving a tag.
 
 ## [Unreleased]
 
+### Added
+
+- Cameras over RTMP: the stream guard accepts `rtmp://` and `rtmps://` from a public
+  server, pinned to the checked address as RTSP is, and `rtmp` and `rtmps` are on ffmpeg's
+  protocol whitelist.
+- `streaming.Guard.Trusted` and `source.Config.Trusted`: the internal host:port addresses a
+  camera may still be read from over RTMP -- the engine's own receiver, for cameras that push
+  (github.com/hyz-is/arandu-rtmp).
+
 ## [0.1.0] - 2026-10-13
 
 ### Added

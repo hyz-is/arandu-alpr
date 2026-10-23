@@ -13,12 +13,12 @@ import (
 // ErrCameraAddress is a camera address the engine refuses to connect to.
 var ErrCameraAddress = errors.New("streaming: camera address refused")
 
-// protocolWhitelist is every protocol ffmpeg may open for a guarded camera: the four schemes a
-// camera is reached by and what they run on underneath (RTP and UDP inside RTSP, TLS under rtsps
-// and https, crypto under an encrypted HLS segment). It is what keeps file:, concat:, subfile: and
-// the rest out -- including when they are named not in the camera URL but inside what the camera
-// sends back, a playlist being the obvious carrier.
-const protocolWhitelist = "rtsp,rtsps,rtp,srtp,udp,tcp,tls,http,https,httpproxy,crypto"
+// protocolWhitelist is every protocol ffmpeg may open for a guarded camera: the six schemes a
+// camera is reached by and what they run on underneath (RTP and UDP inside RTSP, TLS under rtsps,
+// rtmps and https, crypto under an encrypted HLS segment). It is what keeps file:, concat:,
+// subfile: and the rest out -- including when they are named not in the camera URL but inside
+// what the camera sends back, a playlist being the obvious carrier.
+const protocolWhitelist = "rtsp,rtsps,rtmp,rtmps,rtp,srtp,udp,tcp,tls,http,https,httpproxy,crypto"
 
 // Guard decides which camera addresses the engine connects to.
 //
@@ -29,16 +29,22 @@ const protocolWhitelist = "rtsp,rtsps,rtp,srtp,udp,tcp,tls,http,https,httpproxy,
 //
 // AllowPrivate turns it off, for an engine that runs inside the customer's own network, where the
 // cameras are on private addresses by definition.
+//
+// Trusted names the host:port addresses that are internal on purpose: the engine's own RTMP
+// receiver, where a camera that pushes is read back from (rtmp://127.0.0.1:1935/live/<key>).
+// They pass as rtmp only, and nothing else on an internal address does.
 type Guard struct {
 	AllowPrivate bool
+	Trusted      []string
 	// Lookup resolves a host name; nil uses the system resolver.
 	Lookup func(ctx context.Context, host string) ([]net.IPAddr, error)
 }
 
 // Address returns the URL ffmpeg should open for raw and the input options that go before it.
 //
-// Only rtsp, rtsps, http and https are accepted, and every address the host resolves to has to be
-// public. An RTSP URL with a host name is rewritten to the address that was checked, so the
+// Only rtsp, rtsps, rtmp, rtmps, http and https are accepted, and every address the host resolves
+// to has to be public, except a Trusted one. An RTSP or RTMP URL with a host name is rewritten to
+// the address that was checked, so the
 // connection goes where the check looked and a name that changes its answer between the two
 // cannot redirect it. HTTP keeps its name, because a server behind a name may need it in the Host
 // header and TLS needs it for the certificate; for those the check narrows the window rather than
@@ -53,9 +59,12 @@ func (g Guard) Address(ctx context.Context, raw string) (string, []string, error
 	}
 	scheme := strings.ToLower(u.Scheme)
 	switch scheme {
-	case "rtsp", "rtsps", "http", "https":
+	case "rtsp", "rtsps", "rtmp", "rtmps", "http", "https":
 	default:
-		return "", nil, fmt.Errorf("%w: scheme %q is not rtsp, rtsps, http or https", ErrCameraAddress, u.Scheme)
+		return "", nil, fmt.Errorf("%w: scheme %q is not rtsp, rtsps, rtmp, rtmps, http or https", ErrCameraAddress, u.Scheme)
+	}
+	if scheme == "rtmp" && g.trusted(u.Host) {
+		return raw, []string{"-protocol_whitelist", protocolWhitelist}, nil
 	}
 	host := u.Hostname()
 	if host == "" {
@@ -89,7 +98,7 @@ func (g Guard) Address(ctx context.Context, raw string) (string, []string, error
 		}
 	}
 
-	if scheme == "rtsp" && host != addrs[0].Unmap().String() {
+	if (scheme == "rtsp" || scheme == "rtmp") && host != addrs[0].Unmap().String() {
 		pinned := addrs[0].Unmap().String()
 		if addrs[0].Unmap().Is6() {
 			pinned = "[" + pinned + "]"
@@ -101,6 +110,16 @@ func (g Guard) Address(ctx context.Context, raw string) (string, []string, error
 		raw = u.String()
 	}
 	return raw, []string{"-protocol_whitelist", protocolWhitelist}, nil
+}
+
+// trusted reports whether hostport is one of the addresses Trusted names, exactly.
+func (g Guard) trusted(hostport string) bool {
+	for _, t := range g.Trusted {
+		if strings.EqualFold(t, hostport) {
+			return true
+		}
+	}
+	return false
 }
 
 // internalPrefixes are the ranges a camera on the internet is never in, beyond what netip's own
