@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.2.0
+
+Nothing to change: every addition is a new field or method, and the defaults keep
+v0.1.0's behaviour. A camera without `ROI` is read whole, and a parked vehicle is
+still reported once per cooldown unless `runner.Config.DedupWhilePresent` is set.
+
 ## v0.1.0
 
 The first public release. Nothing to upgrade from.

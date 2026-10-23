@@ -10,6 +10,8 @@ a release is corrected by another release and never by moving a tag.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-23
+
 ### Added
 
 - Cameras over RTMP: the stream guard accepts `rtmp://` and `rtmps://` from a public
