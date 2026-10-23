@@ -23,6 +23,8 @@ import (
 type Deduper struct {
 	cooldown    time.Duration
 	maxDistance int
+	// whilePresent makes a suppressed reading refresh the timer: see WhilePresent.
+	whilePresent bool
 
 	mu     sync.Mutex
 	lastAt map[string]time.Time
@@ -38,11 +40,23 @@ func NewDeduper(cooldown time.Duration, maxDistance int) *Deduper {
 	return &Deduper{cooldown: cooldown, maxDistance: maxDistance, lastAt: make(map[string]time.Time)}
 }
 
+// WhilePresent makes the window run from the last time the plate was SEEN rather than from the
+// last time it was emitted: a car that stays in frame is reported once, and again only after it
+// has been out of sight for the whole cooldown.
+//
+// Without it a car parked in front of a camera is reported every cooldown for as long as it
+// stays -- a 30-second cooldown turned one parked car into 120 readings an hour, 17% of every
+// reading the fleet made (Olho de Águia, 22/10/2026). That default stays for installers who want
+// a periodic reminder that a vehicle is still there; this is the one a history of passages wants.
+func (d *Deduper) WhilePresent() *Deduper {
+	d.whilePresent = true
+	return d
+}
+
 // Accept reports whether this reading should be emitted, and records it if so.
 //
-// A rejected reading does **not** refresh the timer. If it did, a vehicle parked in frame would
-// hold its own cooldown open forever and never be reported again -- the window would restart on
-// every suppressed frame rather than on the last emission.
+// By default a rejected reading does **not** refresh the timer, so a vehicle parked in frame is
+// reported again once per cooldown. WhilePresent turns that into "once while it stays".
 func (d *Deduper) Accept(plate string, now time.Time) bool {
 	key := normalisePlate(plate)
 	if key == "" {
@@ -66,6 +80,9 @@ func (d *Deduper) Accept(plate string, now time.Time) bool {
 
 	for known := range d.lastAt {
 		if levenshteinWithin(key, known, d.maxDistance) {
+			if d.whilePresent {
+				d.lastAt[known] = now
+			}
 			return false
 		}
 	}

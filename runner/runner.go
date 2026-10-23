@@ -65,6 +65,9 @@ type Config struct {
 	// reading -- which is the crossing an operator is usually most interested in.
 	DedupCooldown time.Duration
 	DedupDistance int
+	// DedupWhilePresent reports a plate that stays in frame once, not once per cooldown
+	// (alpr.Deduper.WhilePresent).
+	DedupWhilePresent bool
 }
 
 // Defaults mirror the Python service's production values.
@@ -157,6 +160,9 @@ func (r *Runner) Start(ctx context.Context, spec contract.CameraSpec, device int
 		cfg.Focus = focus
 	}
 	cfg.Dedup = alpr.NewDeduper(r.cfg.DedupCooldown, r.cfg.DedupDistance)
+	if r.cfg.DedupWhilePresent {
+		cfg.Dedup.WhilePresent()
+	}
 
 	cam, err := camera.New(cfg)
 	if err != nil {

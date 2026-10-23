@@ -72,6 +72,12 @@ type CameraSpec struct {
 	// Placement optionally pins this camera to a device ("cuda:1"). Empty lets the service
 	// choose the least loaded one.
 	Placement string
+
+	// ROI is the part of the frame plates are looked for in, as fractions of the frame: the
+	// detector sees only that rectangle, so sky, sidewalk and the cars parked across the street
+	// cost nothing and read nothing, and a small plate far away gets more of the detector's
+	// input. Nil, or a rectangle that does not fit, is the whole frame.
+	ROI *Region
 }
 
 // redacted replaces a credential wherever a camera is printed.
@@ -251,4 +257,24 @@ type Observer interface {
 // watching; a detection is the product.
 type Preview interface {
 	Frame(cameraID string, jpeg []byte, boxes []BBox)
+}
+
+// Region is a rectangle in fractions of the frame: X and Y of its top-left corner, Width and
+// Height, each from 0 to 1.
+type Region struct {
+	X, Y, Width, Height float64
+}
+
+// Pixels places r on a frame of w x h and reports whether it is worth cropping: a region that
+// is out of range, too small to hold a plate, or the whole frame is not.
+func (r *Region) Pixels(w, h int) (x0, y0, x1, y1 int, ok bool) {
+	if r == nil || r.X < 0 || r.Y < 0 || r.X >= 1 || r.Y >= 1 || r.Width <= 0 || r.Height <= 0 {
+		return 0, 0, w, h, false
+	}
+	x0, y0 = int(r.X*float64(w)), int(r.Y*float64(h))
+	x1, y1 = min(w, x0+int(r.Width*float64(w)+0.5)), min(h, y0+int(r.Height*float64(h)+0.5))
+	if x1-x0 < 32 || y1-y0 < 16 || (x0 == 0 && y0 == 0 && x1 == w && y1 == h) {
+		return 0, 0, w, h, false
+	}
+	return x0, y0, x1, y1, true
 }

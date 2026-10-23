@@ -150,3 +150,30 @@ func TestLevenshteinWithinMatchesKnownDistances(t *testing.T) {
 		}
 	}
 }
+
+// TestAParkedCarIsReportedOnceWhilePresent: in WhilePresent mode a plate that keeps being read
+// refreshes its own window, and is reported again only after it was out of sight for the whole
+// cooldown.
+func TestAParkedCarIsReportedOnceWhilePresent(t *testing.T) {
+	start := time.Unix(1_700_000_000, 0)
+	periodic := NewDeduper(30*time.Second, 1)
+	present := NewDeduper(30*time.Second, 1).WhilePresent()
+	var periodicN, presentN int
+	// Parked for ten minutes, read every five seconds.
+	for i := 0; i <= 120; i++ {
+		now := start.Add(time.Duration(i) * 5 * time.Second)
+		if periodic.Accept("ABC1D23", now) {
+			periodicN++
+		}
+		if present.Accept("ABC1D23", now) {
+			presentN++
+		}
+	}
+	if periodicN != 21 || presentN != 1 {
+		t.Fatalf("ten parked minutes: periodic reported %d times (want 21: one per 30 s, 0 through 600), while-present %d (want 1)", periodicN, presentN)
+	}
+	// It leaves, and comes back after a minute away.
+	if !present.Accept("ABC1D23", start.Add(10*time.Minute+61*time.Second)) {
+		t.Fatal("the car that came back after a minute is not reported")
+	}
+}

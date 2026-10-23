@@ -18,6 +18,12 @@ a release is corrected by another release and never by moving a tag.
 - `streaming.Guard.Trusted` and `source.Config.Trusted`: the internal host:port addresses a
   camera may still be read from over RTMP -- the engine's own receiver, for cameras that push
   (github.com/hyz-is/arandu-rtmp).
+- `contract.CameraSpec.ROI` and `contract.Region`: the rectangle of the frame plates are looked
+  for in, as fractions. The camera crops it before the detector and maps the boxes back to the
+  whole frame.
+- `alpr.Deduper.WhilePresent` and `runner.Config.DedupWhilePresent`: a plate that stays in frame
+  is reported once, and again only after it was out of sight for the whole cooldown. The default
+  still reports a parked vehicle once per cooldown.
 
 ## [0.1.0] - 2026-10-13
 

@@ -207,8 +207,10 @@ type Camera struct {
 
 	// Reused across frames. Their capacity is the whole per-frame allocation budget.
 	candidates []engine.Candidate
-	active     []activeDetection
-	boxes      []contract.BBox
+	// roiPix holds the ROI crop of the current frame (roi.go).
+	roiPix []byte
+	active []activeDetection
+	boxes  []contract.BBox
 
 	staleRun     int
 	lastDetectAt time.Time

@@ -59,9 +59,19 @@ func (c *Camera) step(ctx context.Context, f engine.Frame) stepResult {
 		c.cfg.Adjust(f.Pix, c.cfg.Spec.Brightness, c.cfg.Spec.Contrast)
 	}
 
-	candidates, ok := c.detect(ctx, f)
+	// The ROI: the detector sees only the rectangle the camera's owner drew, and the boxes come
+	// back in the whole frame's pixels, so the gate, the focus test, the crop and the reading
+	// all work on f as before.
+	region, dx, dy := c.roiFrame(f)
+	candidates, ok := c.detect(ctx, region)
 	if !ok {
 		return stepContinue
+	}
+	if dx != 0 || dy != 0 {
+		for i := range candidates {
+			candidates[i].Box.X += float64(dx)
+			candidates[i].Box.Y += float64(dy)
+		}
 	}
 
 	for i := range candidates {
