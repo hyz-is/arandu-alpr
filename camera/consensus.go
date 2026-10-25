@@ -123,6 +123,9 @@ func (c *Camera) keep(track uint64, f engine.Frame) {
 	}
 	k := c.kept[track]
 	if k == nil {
+		if len(c.kept) >= maxKeptFrames {
+			c.evictOldestKept()
+		}
 		k = &keptFrame{}
 		c.kept[track] = k
 	}
@@ -144,6 +147,25 @@ func (c *Camera) drop(track uint64) {
 	delete(c.kept, track)
 	if len(c.spare) < maxSpareFrames && cap(k.pix) > 0 {
 		c.spare = append(c.spare, k.pix[:0])
+	}
+}
+
+// maxKeptFrames bounds the pictures a camera holds for tracks that have not decided: one frame is
+// 11 MB at 1440p, and a car park can show a dozen plates at once. A track that loses its picture to
+// a newer one is still decided and reported; it just goes without images.
+const maxKeptFrames = 4
+
+// evictOldestKept gives back the picture of the track whose best frame is the oldest.
+func (c *Camera) evictOldestKept() {
+	var oldest uint64
+	var at time.Time
+	for id, k := range c.kept {
+		if oldest == 0 || k.at.Before(at) {
+			oldest, at = id, k.at
+		}
+	}
+	if oldest != 0 {
+		c.drop(oldest)
 	}
 }
 

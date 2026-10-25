@@ -302,3 +302,22 @@ func TestConsensusWorksWithAnEngineThatKeptOnlyTheText(t *testing.T) {
 		t.Errorf("sink calls = %d, plate %q", got, r.sink.lastDetection().Plate)
 	}
 }
+
+func TestAnyNumberOfPlatesHoldsAtMostAFewPictures(t *testing.T) {
+	// A car park shows a dozen plates at once, and each of them is a frame of 11 MB at 1440p.
+	cfg := alpr.DefaultConsensus()
+	enc, _ := imaging.NewEncoder(80)
+	r := newRig(t, func(c *Config) {
+		c.Consensus = &cfg
+		c.Encoder = enc
+		c.IncludeCropImage = true
+	})
+	for i := 0; i < 12; i++ {
+		f := engine.Frame{Pix: make([]byte, 64), Width: frameW, Height: frameH, CapturedAt: r.clock.Now()}
+		r.cam.keep(uint64(i+1), f)
+		r.clock.Advance(time.Millisecond)
+	}
+	if len(r.cam.kept) > maxKeptFrames {
+		t.Errorf("%d pictures held for 12 undecided plates, the bound is %d", len(r.cam.kept), maxKeptFrames)
+	}
+}
