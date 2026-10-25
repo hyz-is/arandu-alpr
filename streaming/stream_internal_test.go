@@ -810,12 +810,123 @@ func TestCuvidKeepsTheFrameInSystemMemory(t *testing.T) {
 	}
 }
 
-func TestMaxFPSFiltersAfterTheDecoder(t *testing.T) {
-	if args := (Config{}).filterArgs(); args != nil {
-		t.Errorf("an unconfigured Config filtered frames: %v", args)
+func TestUnconfiguredStreamIsNotFiltered(t *testing.T) {
+	args, w, h := (Config{}).filterArgs(2560, 1440)
+	if args != nil || w != 2560 || h != 1440 {
+		t.Errorf("an unconfigured Config filtered the picture: %v %dx%d", args, w, h)
 	}
-	if got := strings.Join(Config{MaxFPS: 10}.filterArgs(), " "); got != "-vf fps=10" {
-		t.Errorf("filterArgs = %q, want %q", got, "-vf fps=10")
+}
+
+func TestMaxFPSOnlyDropsFrames(t *testing.T) {
+	// The cap is a select on the timestamps, never the fps filter: that one makes a frame at every
+	// 1/N whether or not the camera sent one, so a camera at 8 fps behind a cap of 15 fed the
+	// recogniser 15 pictures a second, seven of them copies.
+	args, _, _ := Config{MaxFPS: 10}.filterArgs(1920, 1080)
+	got := strings.Join(args, " ")
+	if strings.Contains(got, "fps=") {
+		t.Fatalf("filterArgs uses the fps filter, which repeats frames: %q", got)
+	}
+	if !strings.HasPrefix(got, "-vf select=") || !strings.Contains(got, "prev_selected_t") {
+		t.Errorf("filterArgs = %q, want a select on the previous selected timestamp", got)
+	}
+	// A frame with no timestamp must pass: an unknown time is not a reason to drop it.
+	if !strings.Contains(got, "isnan(t)") {
+		t.Errorf("filterArgs = %q drops frames that carry no timestamp", got)
+	}
+}
+
+func TestMaxHeightScalesDownAndNeverUp(t *testing.T) {
+	args, w, h := Config{MaxHeight: 1080}.filterArgs(2560, 1440)
+	if w != 1920 || h != 1080 {
+		t.Errorf("2560x1440 became %dx%d, want 1920x1080", w, h)
+	}
+	if got := strings.Join(args, " "); got != "-vf scale=1920:1080:flags=area" {
+		t.Errorf("filterArgs = %q", got)
+	}
+
+	// Proportions are kept, and the width stays even.
+	if _, w, h := (Config{MaxHeight: 1080}).filterArgs(2592, 1944); w != 1440 || h != 1080 {
+		t.Errorf("2592x1944 became %dx%d, want 1440x1080", w, h)
+	}
+	if _, w, h := (Config{MaxHeight: 1080}).filterArgs(1000, 1500); w%2 != 0 || h != 1080 {
+		t.Errorf("1000x1500 became %dx%d, want an even width", w, h)
+	}
+
+	// A camera that is not taller than the limit is left alone.
+	for _, size := range [][2]int{{1920, 1080}, {1280, 720}, {704, 576}} {
+		args, w, h := Config{MaxHeight: 1080}.filterArgs(size[0], size[1])
+		if args != nil || w != size[0] || h != size[1] {
+			t.Errorf("%dx%d was scaled to %dx%d (%v); a limit only ever shrinks", size[0], size[1], w, h, args)
+		}
+	}
+}
+
+func TestCapAndLimitShareOneChain(t *testing.T) {
+	args, _, _ := Config{MaxFPS: 15, MaxHeight: 1080}.filterArgs(2560, 1440)
+	got := strings.Join(args, " ")
+	// select first: scaling a frame that is about to be dropped is the work the cap exists to save.
+	if strings.Index(got, "select=") > strings.Index(got, "scale=") || strings.Count(got, "-vf") != 1 {
+		t.Errorf("filterArgs = %q, want one -vf with the select before the scale", got)
+	}
+}
+
+// TestRealFFmpegCapDoesNotRepeatFrames feeds real ffmpeg a clip it makes itself: eight frames a
+// second for four seconds. A cap of 15 must deliver those 32 frames, and not the 60 the fps
+// filter made of them; a cap of 4 must halve them; a limit of 180 lines must shrink the picture.
+func TestRealFFmpegCapDoesNotRepeatFrames(t *testing.T) {
+	for _, tool := range []string{"ffmpeg", "ffprobe"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " not installed")
+		}
+	}
+	clip := filepath.Join(t.TempDir(), "clip.mkv")
+	gen := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi",
+		"-i", "testsrc=size=640x360:rate=8:duration=4", "-c:v", "mpeg4", "-q:v", "3", clip)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Skipf("cannot generate a test clip: %v %s", err, out)
+	}
+
+	count := func(cfg Config) (n int, w, h int) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cfg.URL = clip
+		o := NewOpener(2, nil)
+		o.SetGuard(Guard{AllowPrivate: true}) // a local file is not a camera address
+		s, err := o.Open(ctx, cfg)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer s.Close()
+		props := s.Properties()
+		for {
+			f, ok := s.Next(ctx)
+			if !ok {
+				break
+			}
+			if len(f.Bytes) != props.Width*props.Height*3 {
+				t.Fatalf("frame is %d bytes, want %d", len(f.Bytes), props.Width*props.Height*3)
+			}
+			n++
+			f.Release()
+		}
+		// A frame the consumer was too slow for is dropped by design, and counts as delivered by
+		// the filter: what is under test is how many frames ffmpeg made.
+		return n + int(s.Dropped()), props.Width, props.Height
+	}
+
+	if n, _, _ := count(Config{}); n != 32 {
+		t.Fatalf("no cap: %d frames from a 32 frame clip", n)
+	}
+	if n, _, _ := count(Config{MaxFPS: 15}); n != 32 {
+		t.Errorf("cap 15 on 8 fps: %d frames, want 32; a cap above the camera's rate must do nothing", n)
+	}
+	if n, _, _ := count(Config{MaxFPS: 4}); n < 15 || n > 17 {
+		t.Errorf("cap 4 on 8 fps: %d frames, want 16", n)
+	}
+	n, w, h := count(Config{MaxHeight: 180})
+	if w != 320 || h != 180 || n != 32 {
+		t.Errorf("limit 180: %d frames of %dx%d, want 32 of 320x180", n, w, h)
 	}
 }
 

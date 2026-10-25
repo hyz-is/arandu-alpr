@@ -266,11 +266,27 @@ type Config struct {
 	// MaxFPS drops frames inside ffmpeg, after the decoder and before the bgr24 conversion and
 	// the pipe. Zero passes every frame.
 	//
-	// The camera loop already paces detection by time, but every frame it skips was still
-	// converted to BGR and copied through the pipe -- and the conversion is the largest share of
-	// ffmpeg's CPU once NVDEC decodes. Cameras run at 10 to 30 fps; the Python worker caps them at
-	// 10 in production and reads the same plates.
+	// It only ever DROPS. The fps filter this used to be makes a frame at every 1/MaxFPS whether
+	// or not the camera sent one, so a camera that delivers 8 fps behind a cap of 15 yielded 15,
+	// seven of them copies -- measured on a real stream: fps=10 on 8 fps gave 600 frames a
+	// minute where the camera sent 480, and fps=15 gave 900. Each copy cost a conversion, a pipe
+	// write and, under a consensus that counts readings, a duplicate vote for a picture it had
+	// already counted. Dropping cannot invent a frame, so a cap above the camera's rate is a cap
+	// that does nothing, which is what a cap is for.
+	//
+	// The cap, like MaxHeight, belongs to the raw frame output alone. The Tap is a second output of
+	// the same ffmpeg that copies the camera's packets, so no frame is dropped from it.
 	MaxFPS float64
+
+	// MaxHeight scales a taller picture down to this height, keeping its proportions, before the
+	// bgr24 conversion. Zero keeps the camera's own size.
+	//
+	// The plate reads the same from 1080 lines as from 1440 -- measured, the OCR takes a 128x64
+	// crop and a plate that is 160 pixels wide at 1440p is 120 at 1080p, which it reads as well --
+	// while a frame is 44% smaller to convert, to pipe and to hold three of per camera. A camera
+	// no taller than this is never scaled UP. It does not touch the Tap, which keeps the camera's
+	// own picture.
+	MaxHeight int
 
 	// Tap receives a copy of the camera's compressed video as fragmented MP4, written by the same
 	// ffmpeg that decodes it as a second output with -c copy: nothing is decoded or encoded for it.
@@ -301,12 +317,31 @@ func tapArgs() []string {
 // tapFragment is the longest a fragment of the tap may be.
 const tapFragment = 100 * time.Millisecond
 
-// filterArgs returns the output filter that caps the frame rate, or nothing.
-func (c Config) filterArgs() []string {
-	if c.MaxFPS <= 0 {
-		return nil
+// filterArgs returns the output filters for a source of srcW x srcH, and the size of what they
+// produce. With neither a cap nor a limit it returns no arguments and the source's own size.
+func (c Config) filterArgs(srcW, srcH int) (args []string, outW, outH int) {
+	outW, outH = srcW, srcH
+	var chain []string
+	if c.MaxFPS > 0 {
+		gap := strconv.FormatFloat(0.9/c.MaxFPS, 'f', 4, 64)
+		// 0.9 of the interval and not the whole of it: a source whose frames are exactly 1/MaxFPS
+		// apart would otherwise lose every second one to rounding in the timestamps. A picture
+		// without a timestamp passes -- an unknown time is not a reason to drop.
+		chain = append(chain, "select='isnan(prev_selected_t)+isnan(t)+gte(t-prev_selected_t,"+gap+")'")
 	}
-	return []string{"-vf", "fps=" + strconv.FormatFloat(c.MaxFPS, 'g', -1, 64)}
+	if c.MaxHeight > 0 && srcH > c.MaxHeight && srcW > 0 {
+		outH = c.MaxHeight
+		// Even, because the pixel formats a camera sends are subsampled in pairs.
+		outW = (srcW*c.MaxHeight/srcH + 1) &^ 1
+		// area: every output pixel is the mean of the source pixels it covers. The default
+		// bicubic samples a few and skips the rest, which turns thin strokes into noise at the
+		// ratios a plate is shrunk by.
+		chain = append(chain, "scale="+strconv.Itoa(outW)+":"+strconv.Itoa(outH)+":flags=area")
+	}
+	if len(chain) == 0 {
+		return nil, outW, outH
+	}
+	return []string{"-vf", strings.Join(chain, ",")}, outW, outH
 }
 
 // LogValue prints how the stream is opened, not the camera's credentials.
@@ -320,6 +355,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("hwaccel", c.HWAccel),
 		slog.Int("hwdevice", c.HWDevice),
 		slog.Float64("max_fps", c.MaxFPS),
+		slog.Int("max_height", c.MaxHeight),
 	)
 }
 
@@ -615,6 +651,11 @@ func (o *Opener) Open(ctx context.Context, cfg Config) (*Stream, error) {
 		return nil, err
 	}
 
+	// What the pipe carries is what the filters make of the picture, and the ring, the reads and
+	// every frame handed out are sized by that. Properties reports it, not the camera's own size.
+	filter, outW, outH := cfg.filterArgs(props.Width, props.Height)
+	props.Width, props.Height = outW, outH
+
 	runCtx, cancel := context.WithCancel(ctx)
 
 	// One pending frame, and the producer replaces it rather than queueing or blocking. The
@@ -625,7 +666,7 @@ func (o *Opener) Open(ctx context.Context, cfg Config) (*Stream, error) {
 
 	args := append(append(cfg.hwaccelArgs(props.Codec), guarded...), transportArgs(url)...)
 	args = append(args, "-i", url, "-an")
-	args = append(args, cfg.filterArgs()...)
+	args = append(args, filter...)
 	args = append(args,
 		"-vsync", "passthrough",
 		"-f", "rawvideo",

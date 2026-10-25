@@ -58,8 +58,14 @@ type Config struct {
 	// NVDEC block is separate silicon from the SMs, so the decode competes with nothing.
 	HWAccel string
 
-	// MaxFPS caps the frames ffmpeg converts and pipes, after the decoder. Zero passes every one.
+	// MaxFPS caps the frames ffmpeg converts and pipes, after the decoder, by dropping: it never
+	// repeats a frame to reach the rate, so a camera slower than the cap is read as it is. Zero
+	// passes every one.
 	MaxFPS float64
+
+	// MaxHeight scales a taller picture down to this height, keeping its proportions (1080 for a
+	// camera that sends 1440). Zero keeps the camera's own size.
+	MaxHeight int
 
 	// AllowPrivate lets cameras on internal addresses through: an engine that runs inside the
 	// customer's network. Off, every camera address has to be public, checked at each connection
@@ -101,6 +107,7 @@ func (d *FFmpegDialer) Dial(ctx context.Context, spec contract.CameraSpec) (*Str
 		DebugBufferOwnership: d.cfg.DebugBufferOwnership,
 		HWAccel:              d.cfg.HWAccel,
 		MaxFPS:               d.cfg.MaxFPS,
+		MaxHeight:            d.cfg.MaxHeight,
 		// Decode on the card that will run this camera's inference.
 		//
 		// The alternative is to let ffmpeg choose, and ffmpeg always chooses device 0 -- so
