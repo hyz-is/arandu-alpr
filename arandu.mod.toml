@@ -6,7 +6,7 @@
 # four lines below worth reading before installing anything.
 
 name = "hyz-is/alpr"
-framework = ">= 0.56"
+framework = ">= 0.66"
 profiles = ["conventional", "performance"]
 
 [permissions]
