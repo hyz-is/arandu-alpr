@@ -142,3 +142,26 @@ func TestMeanConfidenceOfNothingIsZero(t *testing.T) {
 		t.Error("no characters read must not produce a confident reading")
 	}
 }
+
+func TestAPlateTooNarrowForTheFrameIsNotWorthAnOCRPass(t *testing.T) {
+	g := DefaultGate()
+	g.MinWidthPct = 0.045 // 115 px of 2560
+	near := BBox{X: 800, Y: 400, Width: 170, Height: 90}
+	far := BBox{X: 800, Y: 400, Width: 100, Height: 50}
+
+	if !g.AcceptDetection(0.8, near, 2560, 1440) {
+		t.Error("a plate 6.6% of the frame was refused")
+	}
+	if g.AcceptDetection(0.8, far, 2560, 1440) {
+		t.Error("a plate 3.9% of the frame was accepted")
+	}
+	// The same plate in a frame scaled to 1080p is the same fraction of it.
+	scaled := BBox{X: 600, Y: 300, Width: 75, Height: 38}
+	if g.AcceptDetection(0.8, scaled, 1920, 1080) {
+		t.Error("the far plate was accepted once the frame was scaled: the gate is not a fraction")
+	}
+	// Off by default, and off when set to zero.
+	if !DefaultGate().AcceptDetection(0.8, far, 2560, 1440) {
+		t.Error("the width gate is on by default")
+	}
+}

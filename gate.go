@@ -35,6 +35,19 @@ type GateConfig struct {
 	// MinOCRConfidence rejects weak readings after the OCR pass.
 	MinOCRConfidence float64
 
+	// MinWidthPct drops plates narrower than this fraction of the frame's width (0 = off).
+	//
+	// A plate that small is far from the camera, and the OCR does not read it: on a real camera
+	// the readings of plates under 4.5% of the frame were exact 3 times in 100, and plates
+	// between 4.5% and 6% 10 times in 100, against more than half from 6% up. They were more than
+	// half of all the OCR passes that camera paid for, and the confident wrong readings among them
+	// are what a vehicle reported under three different plates is made of. Rejecting them here costs
+	// arithmetic, where reading them costs a GPU pass.
+	//
+	// It is a property of the camera's view, not of plates, so it is off by default: a camera that
+	// looks down a long road sees every plate small, and the right number for it is its own.
+	MinWidthPct float64
+
 	// EdgeFilterEnabled and EdgeMarginPct drop plates touching the frame border.
 	EdgeFilterEnabled bool
 	EdgeMarginPct     float64
@@ -67,6 +80,9 @@ func DefaultGate() GateConfig {
 // send a garbage crop to the OCR, and the reading that came back would look like any other.
 func (g GateConfig) AcceptDetection(score float64, b BBox, frameW, frameH int) bool {
 	if !(score >= g.MinDetectionScore) {
+		return false
+	}
+	if g.MinWidthPct > 0 && frameW > 0 && b.Width < g.MinWidthPct*float64(frameW) {
 		return false
 	}
 	return g.withinSafeZone(b, frameW, frameH)
