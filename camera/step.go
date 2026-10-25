@@ -74,6 +74,11 @@ func (c *Camera) step(ctx context.Context, f engine.Frame) stepResult {
 		}
 	}
 
+	// An overlay is told what this pass found, but only when somebody is watching, and what it is
+	// told is gathered in a slice the camera keeps: a camera nobody watches allocates nothing.
+	watched := c.cfg.Overlay != nil && c.cfg.Overlay.Watched(c.cfg.Spec.ID)
+	c.items = c.items[:0]
+
 	for i := range candidates {
 		cand := candidates[i]
 		box := toGateBox(cand.Box)
@@ -90,9 +95,15 @@ func (c *Camera) step(ctx context.Context, f engine.Frame) stepResult {
 			continue
 		}
 
-		c.recognize(ctx, f, cand, now)
+		plate, confidence := c.recognize(ctx, f, cand, now)
+		if watched {
+			c.items = append(c.items, contract.PassItem{Box: cand.Box, Score: cand.Score, Plate: plate, Confidence: confidence})
+		}
 	}
 
+	if watched {
+		c.cfg.Overlay.Pass(c.cfg.Spec.ID, contract.Pass{Width: f.Width, Height: f.Height, CapturedAt: f.CapturedAt, Items: c.items})
+	}
 	return stepContinue
 }
 
@@ -168,8 +179,10 @@ func (c *Camera) detect(ctx context.Context, f engine.Frame) ([]engine.Candidate
 	return candidates, true
 }
 
-// recognize reads one surviving box and, if it holds up, delivers it.
-func (c *Camera) recognize(ctx context.Context, f engine.Frame, cand engine.Candidate, now time.Time) {
+// recognize reads one surviving box and, if it holds up, delivers it. It answers the plate it read
+// and how sure it was when the reading passed the gate, whether or not it was then reported again;
+// the overlay shows a parked car's plate on every pass, and the sink hears of it once.
+func (c *Camera) recognize(ctx context.Context, f engine.Frame, cand engine.Candidate, now time.Time) (string, float64) {
 	ocrCtx, cancel := c.withTimeout(ctx, c.cfg.RecognizeTimeout)
 	start := c.now()
 	reading, err := c.cfg.Engine.Recognize(ocrCtx, f, cand.Box)
@@ -186,7 +199,7 @@ func (c *Camera) recognize(ctx context.Context, f engine.Frame, cand engine.Cand
 			c.cfg.Logger.Warn("ocr failed", LabelCamera, c.cfg.Spec.ID, "error", err)
 			c.emit(ctx, contract.EventInferenceError, "plate reading failed")
 		}
-		return
+		return "", 0
 	}
 
 	confidence := reading.Confidence
@@ -197,11 +210,11 @@ func (c *Camera) recognize(ctx context.Context, f engine.Frame, cand engine.Cand
 		confidence = alpr.MeanConfidence(reading.CharConfidences)
 	}
 	if !c.cfg.Gate.AcceptReading(reading.Plate, confidence) {
-		return
+		return "", 0
 	}
 	if c.cfg.Dedup != nil && !c.cfg.Dedup.Accept(reading.Plate, now) {
 		c.m.deduplicated.Inc()
-		return
+		return reading.Plate, confidence
 	}
 
 	c.m.detected.Inc()
@@ -217,6 +230,7 @@ func (c *Camera) recognize(ctx context.Context, f engine.Frame, cand engine.Cand
 	c.m.pipelineDuration.Observe(c.now().Sub(f.CapturedAt).Seconds())
 
 	c.deliver(ctx, f, cand, reading, confidence, now)
+	return reading.Plate, confidence
 }
 
 // deliver encodes what was asked for, publishes the overlay and hands the Detection over.

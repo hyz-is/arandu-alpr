@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"time"
 )
@@ -257,6 +258,57 @@ type Observer interface {
 // watching; a detection is the product.
 type Preview interface {
 	Frame(cameraID string, jpeg []byte, boxes []BBox)
+}
+
+// VideoTap is optional and receives a copy of each camera's compressed video, for a live view.
+//
+// The process that decodes a camera already holds its compressed stream. With a tap, that same
+// process writes a second output of it with no re-encoding: fragmented MP4, H.264 or H.265 as the
+// camera sent it, with no audio. Nothing is decoded or encoded for it, and a camera nobody
+// watches costs a muxer and a pipe.
+//
+// Open is called each time a camera's stream is opened, and the writer it returns receives that
+// stream's bytes and is closed when the stream ends. Write must not block and should not fail: the
+// bytes come from a pipe whose reader is the process that reads plates, and a writer that waits
+// stalls it. The engine keeps draining the pipe if Write fails, and stops writing to that writer.
+// Returning nil leaves the tap off for that connection.
+type VideoTap interface {
+	Open(cameraID string) io.WriteCloser
+}
+
+// Overlay is optional and receives what each detection pass found, for the boxes drawn over a live
+// view.
+//
+// Preview carries boxes only when a plate was just accepted. An overlay on live video needs more:
+// every plate the detector found on every pass it ran, whether or not it was read or already
+// reported, and an empty pass when the plate has left, so the box goes away with the car.
+//
+// Watched is asked once per pass, before anything is gathered, and a camera nobody watches pays
+// for that call and nothing else. Pass is called on the camera's own goroutine and must not wait.
+type Overlay interface {
+	Watched(cameraID string) bool
+	Pass(cameraID string, p Pass)
+}
+
+// Pass is one detection pass over one frame.
+type Pass struct {
+	// Width and Height are the frame's size in pixels, which the boxes are in.
+	Width, Height int
+	// CapturedAt is when the frame left the camera.
+	CapturedAt time.Time
+	// Items are the plates found, borrowed for the duration of the call: the camera reuses the
+	// slice on the next pass.
+	Items []PassItem
+}
+
+// PassItem is one plate on a pass.
+type PassItem struct {
+	// Box is the plate's rectangle in the frame, and Score the detector's confidence in it.
+	Box   BBox
+	Score float64
+	// Plate and Confidence are what the OCR read, and empty when the reading did not hold up.
+	Plate      string
+	Confidence float64
 }
 
 // Region is a rectangle in fractions of the frame: X and Y of its top-left corner, Width and

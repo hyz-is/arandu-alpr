@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -270,7 +271,35 @@ type Config struct {
 	// ffmpeg's CPU once NVDEC decodes. Cameras run at 10 to 30 fps; the Python worker caps them at
 	// 10 in production and reads the same plates.
 	MaxFPS float64
+
+	// Tap receives a copy of the camera's compressed video as fragmented MP4, written by the same
+	// ffmpeg that decodes it as a second output with -c copy: nothing is decoded or encoded for it.
+	// Nil adds no second output.
+	//
+	// Open takes ownership: it closes the Tap on every path, when the stream ends or when it never
+	// starts. Write must not block. The pipe it is fed from is drained whatever Write does, because
+	// ffmpeg waits on a full pipe and the raw frames the plates are read from would wait with it.
+	Tap io.WriteCloser
 }
+
+// tapArgs is the second output: the camera's own packets, remuxed, to the descriptor ffmpeg was
+// given as fd 3.
+//
+// Fragments are cut every tapFragment and at every keyframe, so a viewer is at most one fragment
+// behind and not a whole group of pictures. Audio is left out: a plate reader has no use for it and
+// a camera's audio codec is one more thing a browser may not play.
+func tapArgs() []string {
+	return []string{
+		"-map", "0:v:0", "-an", "-c:v", "copy",
+		"-f", "mp4",
+		"-movflags", "empty_moov+default_base_moof+frag_keyframe",
+		"-frag_duration", strconv.Itoa(int(tapFragment / time.Microsecond)),
+		"pipe:3",
+	}
+}
+
+// tapFragment is the longest a fragment of the tap may be.
+const tapFragment = 100 * time.Millisecond
 
 // filterArgs returns the output filter that caps the frame rate, or nothing.
 func (c Config) filterArgs() []string {
@@ -539,6 +568,10 @@ type Stream struct {
 
 	cancel context.CancelFunc
 
+	// tapDone closes when the tap's pipe has been read to its end and the tap closed. Nil without
+	// a tap.
+	tapDone chan struct{}
+
 	once sync.Once
 	// err is atomic because the watchdog goroutine and the read loop can both fail the stream,
 	// and first failure wins: the watchdog's "no frame for 15s" explains the read error that
@@ -561,6 +594,13 @@ func newStream(props Properties, cfg Config, cancel context.CancelFunc) *Stream 
 // Open probes the camera and starts decoding into a channel of frames.
 func (o *Opener) Open(ctx context.Context, cfg Config) (*Stream, error) {
 	cfg = cfg.withDefaults()
+	// The tap is the stream's from here: whatever stops it from starting closes the tap.
+	started := false
+	defer func() {
+		if !started && cfg.Tap != nil {
+			_ = cfg.Tap.Close()
+		}
+	}()
 
 	props, err := o.Probe(ctx, cfg)
 	if err != nil {
@@ -592,19 +632,66 @@ func (o *Opener) Open(ctx context.Context, cfg Config) (*Stream, error) {
 		"-pix_fmt", "bgr24",
 		"pipe:1",
 	)
+	if cfg.Tap != nil {
+		args = append(args, tapArgs()...)
+	}
 	cmd := o.runner(runCtx, "ffmpeg", append([]string{"-loglevel", "error"}, args...)...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("streaming: stdout: %w", err)
 	}
+	var tap *os.File
+	if cfg.Tap != nil {
+		var write *os.File
+		if tap, write, err = os.Pipe(); err != nil {
+			cancel()
+			return nil, fmt.Errorf("streaming: tap pipe: %w", err)
+		}
+		cmd.ExtraFiles = []*os.File{write}
+		// The child has its own copy once it starts; the parent's must go, or the pipe never
+		// reports the end of the stream.
+		defer write.Close()
+	}
 	if err := cmd.Start(); err != nil {
 		cancel()
+		if tap != nil {
+			_ = tap.Close()
+		}
 		return nil, fmt.Errorf("streaming: start ffmpeg: %w", err)
 	}
+	started = true
 
+	if tap != nil {
+		s.tapDone = make(chan struct{})
+		go s.drainTap(tap, cfg.Tap)
+	}
 	go s.pump(runCtx, cmd, stdout, cfg)
 	return s, nil
+}
+
+// drainTap hands the tap pipe to the tap until ffmpeg closes it, and then closes the tap.
+//
+// The pipe is read to its end whatever the writer does. A writer that fails is dropped and the
+// rest is thrown away, because the other side of this pipe is ffmpeg: it blocks when the pipe is
+// full, and the raw frames the plates are read from come from the same process.
+func (s *Stream) drainTap(pipe *os.File, tap io.WriteCloser) {
+	defer close(s.tapDone)
+	defer pipe.Close()
+	defer func() { _ = tap.Close() }()
+	buf := make([]byte, 64<<10)
+	live := true
+	for {
+		n, err := pipe.Read(buf)
+		if n > 0 && live {
+			if _, werr := tap.Write(buf[:n]); werr != nil {
+				live = false
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 // Properties returns the geometry ffprobe reported.
@@ -693,6 +780,10 @@ func (s *Stream) pump(ctx context.Context, cmd *exec.Cmd, stdout io.ReadCloser, 
 	defer func() {
 		s.cancel()
 		_ = cmd.Wait()
+		// ffmpeg has exited, so the tap's pipe is at its end and the reader follows at once.
+		if s.tapDone != nil {
+			<-s.tapDone
+		}
 	}()
 
 	frameSize := s.props.Width * s.props.Height * 3

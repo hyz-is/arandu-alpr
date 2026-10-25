@@ -539,3 +539,95 @@ func TestBackoffIsJittered(t *testing.T) {
 		t.Errorf("backoff(40) = %s, above the %s ceiling", got, r.cam.cfg.MaxReconnectBackoff)
 	}
 }
+
+// recordingOverlay watches or not, and keeps what each pass found.
+type recordingOverlay struct {
+	watching bool
+	asked    int
+	passes   []contract.Pass
+	items    [][]contract.PassItem
+}
+
+func (o *recordingOverlay) Watched(string) bool { o.asked++; return o.watching }
+func (o *recordingOverlay) Pass(_ string, p contract.Pass) {
+	o.passes = append(o.passes, p)
+	// The items are borrowed for the call; a test that keeps them copies.
+	o.items = append(o.items, append([]contract.PassItem(nil), p.Items...))
+}
+
+// TestTheOverlayHearsEveryPassAndSeesAParkedCarAgain.
+//
+// The sink hears of a plate once; the picture a person is watching has to show it for as long as it
+// is in frame, and has to stop showing it when it leaves.
+func TestTheOverlayHearsEveryPassAndSeesAParkedCarAgain(t *testing.T) {
+	overlay := &recordingOverlay{watching: true}
+	r := newRig(t, func(c *Config) {
+		c.Overlay = overlay
+		c.Dedup = alpr.NewDeduper(time.Minute, 2).WhilePresent()
+		c.Focus = fakeFocus{variance: 1e6}
+	})
+	ctx := context.Background()
+	box := contract.BBox{X: 800, Y: 400, Width: 300, Height: 90}
+	r.engine.setCandidates([]engine.Candidate{{Box: box, Score: 0.9}})
+	r.engine.reading = engine.Reading{Plate: "ABC1D23", Confidence: 0.95}
+
+	r.cam.step(ctx, r.freshFrame())
+	r.clock.Advance(time.Second)
+	r.cam.step(ctx, r.freshFrame())
+
+	if got := r.sink.callCount(); got != 1 {
+		t.Fatalf("the sink heard %d readings of a parked car, want 1", got)
+	}
+	if len(overlay.passes) != 2 {
+		t.Fatalf("the overlay heard %d passes, want 2", len(overlay.passes))
+	}
+	for i, items := range overlay.items {
+		if len(items) != 1 || items[0].Plate != "ABC1D23" || items[0].Box != box || items[0].Score != 0.9 || items[0].Confidence != 0.95 {
+			t.Errorf("pass %d items = %+v: the plate has to be on every pass, reported or not", i, items)
+		}
+		if overlay.passes[i].Width != frameW || overlay.passes[i].Height != frameH {
+			t.Errorf("pass %d frame = %dx%d", i, overlay.passes[i].Width, overlay.passes[i].Height)
+		}
+	}
+
+	// The car leaves: the next pass is empty, so the box goes with it.
+	r.engine.setCandidates(nil)
+	r.clock.Advance(time.Second)
+	r.cam.step(ctx, r.freshFrame())
+	if last := overlay.items[len(overlay.items)-1]; len(overlay.items) != 3 || len(last) != 0 {
+		t.Fatalf("after the car left the overlay heard %d passes, the last with %+v, want an empty third", len(overlay.items), last)
+	}
+}
+
+func TestAPlateTheGateRejectsIsNotOnTheOverlayAndAnUnreadOneIsBare(t *testing.T) {
+	overlay := &recordingOverlay{watching: true}
+	r := newRig(t, func(c *Config) { c.Overlay = overlay; c.Focus = fakeFocus{variance: 1e6} })
+	r.engine.setCandidates([]engine.Candidate{
+		{Box: contract.BBox{X: 800, Y: 400, Width: 300, Height: 90}, Score: 0.05}, // below the floor
+		{Box: contract.BBox{X: 100, Y: 600, Width: 300, Height: 90}, Score: 0.9},  // found, not read
+	})
+	r.engine.reading = engine.Reading{}
+	r.cam.step(context.Background(), r.freshFrame())
+	items := overlay.items[0]
+	if len(items) != 1 || items[0].Plate != "" || items[0].Score != 0.9 {
+		t.Fatalf("items = %+v, want the one plate that passed the gate, with no text", items)
+	}
+}
+
+func TestACameraNobodyWatchesGathersNothingAndAllocatesNothing(t *testing.T) {
+	overlay := &recordingOverlay{watching: false}
+	r := newRig(t, func(c *Config) {
+		c.Overlay = overlay
+		c.Spec.MinDetectInterval = 0
+		c.Focus = fakeFocus{variance: 0}
+	})
+	r.engine.setCandidates([]engine.Candidate{{Box: contract.BBox{X: 800, Y: 400, Width: 300, Height: 90}, Score: 0.9}})
+	f := r.freshFrame()
+	ctx := context.Background()
+	if got := testing.AllocsPerRun(200, func() { r.cam.step(ctx, f) }); got != 0 {
+		t.Errorf("an unwatched pass allocates %v times", got)
+	}
+	if len(overlay.passes) != 0 || overlay.asked == 0 {
+		t.Errorf("passes=%d asked=%d: it has to ask, and only ask", len(overlay.passes), overlay.asked)
+	}
+}

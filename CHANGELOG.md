@@ -10,6 +10,19 @@ a release is corrected by another release and never by moving a tag.
 
 ## [Unreleased]
 
+### Added
+
+- `contract.VideoTap` and `source.Config.VideoTap`: a copy of each camera's compressed
+  video for a live view. The ffmpeg that already decodes the camera writes a second output,
+  `-c copy` to fragmented MP4 on a descriptor of its own, cut every tenth of a second, so
+  nothing is decoded or encoded for it and a camera is still read once. The tap is closed on
+  every path, its pipe is drained whatever its writer does, and a camera with no tap runs the
+  same ffmpeg arguments as before.
+- `contract.Overlay` and `camera.Config.Overlay`: every detection pass tells a watched camera's
+  overlay which plates the detector found, with the reading when it held up, whether or not
+  the plate was reported again, and an empty pass when the plate has gone. A camera nobody
+  watches asks once per pass and allocates nothing.
+
 ## [0.3.0] - 2026-10-25
 
 ### Changed

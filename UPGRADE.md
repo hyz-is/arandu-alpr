@@ -1,5 +1,12 @@
 # Upgrade Guide
 
+## Unreleased
+
+Nothing to change: `source.Config.VideoTap` and `camera.Config.Overlay` are new and nil by
+default, and a nil one leaves a camera exactly as it was. To show a camera live, give the
+dialer a `VideoTap` (github.com/hyz-is/arandu-live's `Hub` is one) and the camera template an
+`Overlay`.
+
 ## v0.3.0
 
 Go 1.26.10 is the floor: `go.mod` declares `go 1.26.10`, because every

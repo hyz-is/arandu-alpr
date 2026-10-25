@@ -2,9 +2,11 @@ package source
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -231,5 +233,74 @@ func TestDecodeLandsOnTheCameraOwnCard(t *testing.T) {
 		if got := deviceFor(contract.CameraSpec{Placement: placement}); got != want {
 			t.Errorf("placement %q gave device %d, want %d", placement, got, want)
 		}
+	}
+}
+
+type openTap struct {
+	asked []string
+	w     *closingWriter
+}
+
+func (o *openTap) Open(id string) io.WriteCloser {
+	o.asked = append(o.asked, id)
+	if o.w == nil {
+		return nil // no tap for this camera
+	}
+	return o.w
+}
+
+type closingWriter struct {
+	closed atomic.Bool
+}
+
+func (c *closingWriter) Write(p []byte) (int, error) { return len(p), nil }
+func (c *closingWriter) Close() error                { c.closed.Store(true); return nil }
+
+func TestTheDialerAsksTheTapOncePerOpenWithTheCamerasID(t *testing.T) {
+	tap := &openTap{w: &closingWriter{}}
+	cfg := fakeFFmpeg(t, 32, 24, 4)
+	cfg.VideoTap = tap
+	d := NewFFmpegDialer(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	s, err := d.Dial(ctx, contract.CameraSpec{ID: "cam-7", URL: "rtsp://cam/live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for f := range s.Frames() {
+		engine.ReleaseFrame(f)
+	}
+	s.Close()
+
+	if len(tap.asked) != 1 || tap.asked[0] != "cam-7" {
+		t.Fatalf("the tap was asked for %v, want cam-7 once", tap.asked)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !tap.w.closed.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !tap.w.closed.Load() {
+		t.Fatal("the writer the tap gave was not closed when the stream ended")
+	}
+}
+
+func TestATapThatGivesNoWriterLeavesTheCameraAsItWas(t *testing.T) {
+	tap := &openTap{}
+	cfg := fakeFFmpeg(t, 32, 24, 4)
+	cfg.VideoTap = tap
+	d := NewFFmpegDialer(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	s, err := d.Dial(ctx, contract.CameraSpec{ID: "cam-8", URL: "rtsp://cam/live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for f := range s.Frames() {
+		engine.ReleaseFrame(f)
+	}
+	s.Close()
+	if len(tap.asked) != 1 {
+		t.Fatalf("asked %d times", len(tap.asked))
 	}
 }

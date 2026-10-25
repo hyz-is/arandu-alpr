@@ -10,6 +10,7 @@ package source
 
 import (
 	"context"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -71,6 +72,11 @@ type Config struct {
 
 	// Lookup resolves camera host names for that check; nil uses the system resolver.
 	Lookup func(ctx context.Context, host string) ([]net.IPAddr, error)
+
+	// VideoTap, when set, is asked for a writer each time a camera opens, and receives that
+	// stream's compressed video as fragmented MP4 from the same ffmpeg that decodes it, with no
+	// re-encoding (contract.VideoTap). Nil adds nothing to any camera.
+	VideoTap contract.VideoTap
 }
 
 func NewFFmpegDialer(cfg Config) *FFmpegDialer {
@@ -81,7 +87,12 @@ func NewFFmpegDialer(cfg Config) *FFmpegDialer {
 
 // Dial opens one camera.
 func (d *FFmpegDialer) Dial(ctx context.Context, spec contract.CameraSpec) (*Stream, error) {
+	var tap io.WriteCloser
+	if d.cfg.VideoTap != nil {
+		tap = d.cfg.VideoTap.Open(spec.ID)
+	}
 	s, err := d.opener.Open(ctx, streaming.Config{
+		Tap:                  tap,
 		URL:                  spec.URL,
 		Username:             spec.Username,
 		Password:             spec.Password,

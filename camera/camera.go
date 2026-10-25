@@ -85,6 +85,7 @@ type Config struct {
 	Sink     contract.Sink     // optional
 	Observer contract.Observer // optional
 	Preview  contract.Preview  // optional
+	Overlay  contract.Overlay  // optional; told what every detection pass found, while watched
 	Metrics  metrics.Registry  // optional; Discard when nil
 	Logger   *slog.Logger      // optional; discards when nil
 
@@ -211,6 +212,8 @@ type Camera struct {
 	roiPix []byte
 	active []activeDetection
 	boxes  []contract.BBox
+	// items is what the current pass found, for the overlay.
+	items []contract.PassItem
 
 	staleRun     int
 	lastDetectAt time.Time
