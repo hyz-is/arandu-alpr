@@ -278,9 +278,6 @@ type track struct {
 	bestW    float64
 	bestSeen bool
 
-	// bestScore is the highest detector score any of its readings had.
-	bestScore float64
-
 	// vx, vy are the plate's velocity in pixels a second, from its last two readings, and known
 	// says there were two to measure it from. stable is the text the track is sure of, when it is.
 	vx, vy float64
@@ -307,15 +304,16 @@ func (c *Consensus) Observe(o Observation) ObserveResult {
 	if t == nil {
 		t = c.open(o)
 	}
-	w := c.weight(o)
-	t.add(o, w, c.cfg)
-	t.bestScore = math.Max(t.bestScore, o.DetectorScore)
-	t.follow(o)
-
 	res := ObserveResult{Track: t.id}
 	if t.decided {
+		// Decided: the track only keeps hold of its vehicle, so that the readings of a car that
+		// stays in view are absorbed and not reported again. Its evidence is not needed any more.
+		t.follow(o)
 		return res
 	}
+	w := c.weight(o)
+	t.add(o, w, c.cfg)
+	t.follow(o)
 
 	lead, ok := c.lead(t)
 	leadText := o.Plate
