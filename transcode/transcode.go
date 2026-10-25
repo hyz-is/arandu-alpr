@@ -206,7 +206,7 @@ func cuvid(codec string) string {
 }
 
 // Transcode runs one conversion of one camera: the camera's container in, an H.264 container out,
-// until ctx is cancelled, the input ends or ffmpeg stops. It is what arandu-live's Hub asks for.
+// until ctx is cancelled, the input ends or ffmpeg stops. It is what arandu-rtc's Hub asks for.
 func (t *Transcoder) Transcode(ctx context.Context, camera, codec string, width, height int, in io.Reader, out io.Writer) error {
 	encoder := t.Encoder(ctx)
 	device := -1

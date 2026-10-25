@@ -18,7 +18,7 @@ a release is corrected by another release and never by moving a tag.
   decodes) when the card has it, probed once with a real encode, and libx264 ultrafast when it
   does not or when NVENC fails at once. It never touches the plate reader's own decode, which
   keeps its resolution and rate whether anyone watches or not. `Transcode` has the shape
-  arandu-live's Hub asks for, so the Hub can run it on demand.
+  arandu-rtc's Hub asks for, so the Hub can run it on demand.
 
 - `contract.VideoTap` and `source.Config.VideoTap`: a copy of each camera's compressed
   video for a live view. The ffmpeg that already decodes the camera writes a second output,

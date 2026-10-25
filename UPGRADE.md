@@ -4,7 +4,7 @@
 
 Nothing to change: `source.Config.VideoTap` and `camera.Config.Overlay` are new and nil by
 default, and a nil one leaves a camera exactly as it was. To show a camera live, give the
-dialer a `VideoTap` (github.com/hyz-is/arandu-live's `Hub` is one) and the camera template an
+dialer a `VideoTap` (github.com/hyz-is/arandu-rtc's `Hub` is one) and the camera template an
 `Overlay`.
 
 ## v0.3.0
