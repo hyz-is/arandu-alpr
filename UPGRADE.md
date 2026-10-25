@@ -1,6 +1,6 @@
 # Upgrade Guide
 
-## Unreleased
+## v0.4.0
 
 Nothing to change: `source.Config.VideoTap` and `camera.Config.Overlay` are new and nil by
 default, and a nil one leaves a camera exactly as it was. To show a camera live, give the

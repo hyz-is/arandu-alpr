@@ -8,7 +8,7 @@ the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A published module version is immutable: Go serves it from the proxy forever, so
 a release is corrected by another release and never by moving a tag.
 
-## [Unreleased]
+## [0.4.0] - 2026-10-25
 
 ### Added
 
