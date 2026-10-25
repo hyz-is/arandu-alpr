@@ -82,6 +82,15 @@ type Config struct {
 	Gate  alpr.GateConfig
 	Dedup *alpr.Deduper
 
+	// Consensus, when set, makes the camera report a VEHICLE instead of a reading: the readings of
+	// one plate across frames are followed as a track and decided together (alpr.Consensus), and
+	// the Detection that reaches the Sink is the track's verdict, with the images of its best
+	// frame. Nil keeps the older behaviour, one Detection per reading that passes the gate.
+	//
+	// It changes what the gate's MinOCRConfidence means: a single frame below it is still
+	// evidence (ConsensusConfig.MinEvidence is its floor), and the bar is applied to the verdict.
+	Consensus *alpr.ConsensusConfig
+
 	Sink     contract.Sink     // optional
 	Observer contract.Observer // optional
 	Preview  contract.Preview  // optional
@@ -116,6 +125,18 @@ type Config struct {
 	// DetectTimeout and RecognizeTimeout cap one inference call. Zero means no deadline.
 	DetectTimeout    time.Duration
 	RecognizeTimeout time.Duration
+
+	// ActiveDetectInterval, when set, is the detection budget while a plate is being followed
+	// (Consensus has a live track), in place of Spec.MinDetectInterval; nil keeps one budget.
+	//
+	// The two budgets want different things. An empty road needs one look in a quarter of a second
+	// to notice a car, and every look is a GPU pass; a car crossing the picture is on screen for two
+	// seconds and every frame of them is a reading that makes the verdict right. So the camera
+	// idles cheaply and, the moment it sees a plate, reads every frame it is given until the plate
+	// is gone. A camera that sees a vehicle one second in ten pays for one second in ten.
+	//
+	// Backpressure from the Sink still wins: a raised budget is not lowered for a track.
+	ActiveDetectInterval *time.Duration
 
 	// MaxDetectInterval caps how far backpressure may push the detection budget, and
 	// BackpressureRelax is how long the raised budget survives without further complaint.
@@ -215,6 +236,14 @@ type Camera struct {
 	// items is what the current pass found, for the overlay.
 	items []contract.PassItem
 
+	// consensus follows this camera's plates when Config.Consensus is set; kept holds, per track,
+	// a copy of the frame its best reading came from, because the borrowed frame is gone by the
+	// time a track decides. spare is what a finished track gives back, so a camera that has
+	// reached its working set copies frames without allocating.
+	consensus *alpr.Consensus
+	kept      map[uint64]*keptFrame
+	spare     [][]byte
+
 	staleRun     int
 	lastDetectAt time.Time
 	interval     time.Duration
@@ -313,14 +342,24 @@ func New(cfg Config) (*Camera, error) {
 	}
 	cfg = cfg.withDefaults()
 
-	return &Camera{
+	c := &Camera{
 		cfg:      cfg,
 		interval: cfg.Spec.MinDetectInterval,
 		m:        bind(cfg.Metrics, cfg.Spec.ID),
-	}, nil
+	}
+	if cfg.Consensus != nil {
+		c.consensus = alpr.NewConsensus(*cfg.Consensus)
+		c.kept = map[uint64]*keptFrame{}
+	}
+	return c, nil
 }
 
 func (c *Camera) now() time.Time { return c.cfg.Clock() }
+
+// following reports whether a plate is being followed right now.
+func (c *Camera) following() bool {
+	return c.consensus != nil && c.consensus.Tracks() > 0
+}
 
 // errStreamEnded and errStaleStream are internal: they say why serve returned.
 var (

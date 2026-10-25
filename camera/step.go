@@ -28,6 +28,10 @@ func (c *Camera) step(ctx context.Context, f engine.Frame) stepResult {
 	now := c.now()
 	c.m.framesReceived.Inc()
 
+	// Every frame, detected on or not: a vehicle that has left is decided by the clock, and the
+	// clock here is the frames arriving.
+	c.flushConsensus(ctx, now)
+
 	if c.dropStale(now, f) {
 		if c.staleRun >= c.cfg.StaleFramesBeforeReconnect {
 			c.staleRun = 0
@@ -91,11 +95,15 @@ func (c *Camera) step(ctx context.Context, f engine.Frame) stepResult {
 		if !c.cfg.Gate.AcceptDetection(cand.Score, box, f.Width, f.Height) {
 			continue
 		}
-		if c.cfg.Focus != nil && !c.cfg.Gate.AcceptFocus(c.cfg.Focus.FocusVariance(f, cand.Box), box) {
-			continue
+		var focus float64
+		if c.cfg.Focus != nil {
+			focus = c.cfg.Focus.FocusVariance(f, cand.Box)
+			if !c.cfg.Gate.AcceptFocus(focus, box) {
+				continue
+			}
 		}
 
-		plate, confidence := c.recognize(ctx, f, cand, now)
+		plate, confidence := c.recognize(ctx, f, cand, focus, now)
 		if watched {
 			c.items = append(c.items, contract.PassItem{Box: cand.Box, Score: cand.Score, Plate: plate, Confidence: confidence})
 		}
@@ -181,8 +189,10 @@ func (c *Camera) detect(ctx context.Context, f engine.Frame) ([]engine.Candidate
 
 // recognize reads one surviving box and, if it holds up, delivers it. It answers the plate it read
 // and how sure it was when the reading passed the gate, whether or not it was then reported again;
-// the overlay shows a parked car's plate on every pass, and the sink hears of it once.
-func (c *Camera) recognize(ctx context.Context, f engine.Frame, cand engine.Candidate, now time.Time) (string, float64) {
+// the overlay shows a parked car's plate on every pass, and the sink hears of it once. With a
+// consensus the reading is a vote and the sink hears of the vehicle later, from the verdict, but
+// the overlay still shows what this pass read.
+func (c *Camera) recognize(ctx context.Context, f engine.Frame, cand engine.Candidate, focus float64, now time.Time) (string, float64) {
 	ocrCtx, cancel := c.withTimeout(ctx, c.cfg.RecognizeTimeout)
 	start := c.now()
 	reading, err := c.cfg.Engine.Recognize(ocrCtx, f, cand.Box)
@@ -208,6 +218,13 @@ func (c *Camera) recognize(ctx context.Context, f engine.Frame, cand engine.Cand
 		// as every other: the mean, never the minimum. Taking the minimum would re-tune the gate
 		// without changing a single threshold.
 		confidence = alpr.MeanConfidence(reading.CharConfidences)
+	}
+	if c.consensus != nil {
+		c.observe(ctx, f, cand, reading, confidence, focus, now)
+		if !c.cfg.Gate.AcceptReading(reading.Plate, confidence) {
+			return "", 0
+		}
+		return reading.Plate, confidence
 	}
 	if !c.cfg.Gate.AcceptReading(reading.Plate, confidence) {
 		return "", 0
@@ -246,8 +263,12 @@ func (c *Camera) deliver(
 	confidence float64,
 	now time.Time,
 ) {
+	// A consensus verdict whose best frame was not kept (nothing asks for pictures) has no pixels,
+	// and encoding that would only log a failure for every plate.
+	havePixels := len(f.Pix) > 0
+
 	var fullJPEG []byte
-	if c.cfg.Encoder != nil && (c.cfg.IncludeFullImage || c.cfg.Preview != nil) {
+	if havePixels && c.cfg.Encoder != nil && (c.cfg.IncludeFullImage || c.cfg.Preview != nil) {
 		if b, err := c.cfg.Encoder.EncodeFrame(f); err == nil {
 			fullJPEG = b
 		} else {
@@ -264,7 +285,7 @@ func (c *Camera) deliver(
 	}
 
 	var cropJPEG []byte
-	if c.cfg.IncludeCropImage && c.cfg.Encoder != nil {
+	if havePixels && c.cfg.IncludeCropImage && c.cfg.Encoder != nil {
 		if b, err := c.cfg.Encoder.EncodeCrop(f, cand.Box); err == nil {
 			cropJPEG = b
 		} else {
@@ -345,6 +366,9 @@ func (c *Camera) detectInterval(now time.Time) time.Duration {
 	if !c.relaxAt.IsZero() && !now.Before(c.relaxAt) {
 		c.interval = c.cfg.Spec.MinDetectInterval
 		c.relaxAt = time.Time{}
+	}
+	if c.cfg.ActiveDetectInterval != nil && c.relaxAt.IsZero() && c.following() {
+		return min(c.interval, *c.cfg.ActiveDetectInterval)
 	}
 	return c.interval
 }
