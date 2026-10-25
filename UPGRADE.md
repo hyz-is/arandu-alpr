@@ -1,5 +1,19 @@
 # Upgrade Guide
 
+## Unreleased
+
+Nothing breaks. `camera.Config.Consensus` is nil by default and the camera behaves as before.
+
+One behaviour changes for everybody: `MaxFPS` no longer repeats frames. A deployment that set it
+to 10 on cameras slower than that used to read the same picture several times a second and now
+reads each picture once; the frame rate it sees falls to the camera's own, which is what it was
+always meant to be.
+
+Turning the consensus on moves the moment a reading is delivered: a verdict arrives when the
+track has enough agreeing frames (usually under a second after the third), or when the vehicle is
+gone (`ConsensusConfig.Gap` after its last frame), instead of at the first frame that passes the
+gate. `MinOCRConfidence` then judges the verdict, and no longer each frame.
+
 ## v0.4.0
 
 Nothing to change: `source.Config.VideoTap` and `camera.Config.Overlay` are new and nil by

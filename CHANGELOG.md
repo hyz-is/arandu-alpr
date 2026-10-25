@@ -8,6 +8,33 @@ the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A published module version is immutable: Go serves it from the proxy forever, so
 a release is corrected by another release and never by moving a tag.
 
+## [Unreleased]
+
+### Added
+
+- `alpr.Consensus`, `camera.Config.Consensus`: one vehicle, one row. The readings of one plate
+  across frames are followed as a track (same place, same text) and decided together, from the
+  OCR head's whole distribution per frame, weighted by detector score, plate size, sharpness and
+  the reading's own confidence. The Detection that reaches the Sink is the track's verdict, with
+  the JPEGs of the best frame that read the winning text; it is decided early, with the vehicle in
+  view, once enough frames agree, and otherwise when the vehicle is gone. A track no frame backs
+  up (a smear read as something different each frame) is dropped without a row. No plate-format
+  check anywhere: the winner is a text the frames read, or the slot-by-slot best of all of them.
+- `alpr.Reading.Probabilities` and `engine.Reading.Probabilities`: the OCR head's distribution
+  (10 slots by the 37 classes), which the argmax used to throw away.
+- `camera.Config.ActiveDetectInterval`: the detection budget while a plate is being followed. The
+  camera idles at `Spec.MinDetectInterval` and reads every frame of a vehicle once it sees one.
+- `streaming.Config.MaxHeight` and `source.Config.MaxHeight`: scale a taller picture down (1080
+  for a camera that sends 1440) before the BGR conversion, with the area filter.
+
+### Changed
+
+- `streaming.Config.MaxFPS` and `source.Config.MaxFPS` only drop frames. The `fps` filter they
+  used made a frame at every 1/N whether or not the camera sent one: a camera at 8 fps behind a
+  cap of 15 delivered 15, seven of them copies. A cap above the camera's rate now does nothing.
+- `engine/onnx` returns the OCR distribution in `engine.Reading.Probabilities` (a copy; the
+  tensor is reused).
+
 ## [0.4.0] - 2026-10-25
 
 ### Added

@@ -101,6 +101,35 @@ onnx.Config{
 }
 ```
 
+## One vehicle, one row
+
+A car crossing a camera is read once per detection pass, each time from a different picture, and
+no frame's confidence says which of them read the plate right. Left to the gate and the deduper
+the same car is reported under several spellings. Give the camera a `Consensus` and it reports
+the vehicle instead:
+
+```go
+cons := alpr.DefaultConsensus()
+active := time.Duration(0)
+
+cameraTemplate := camera.Config{
+	// ...dialer, engine, gate, sink, encoder...
+	Consensus:            &cons,   // readings of one plate are followed as a track and decided together
+	ActiveDetectInterval: &active, // and every frame is read while one is followed
+}
+```
+
+Each frame contributes the OCR head's whole distribution (`engine.Reading.Probabilities`), not its
+top choice, weighted by the detector's score, the plate's size in the frame, its sharpness and the
+reading's own confidence. The Detection that reaches the `Sink` is the track's verdict, with the
+JPEGs of the best frame that read the winning text. It is decided early, with the car in view, when
+enough frames agree, and otherwise when the car is gone. A plate nothing agrees on is dropped
+without a row. There is no plate-format rule: the winner is a text some frame read, or the
+slot-by-slot best of all of them. `alpr.Consensus` is also usable on its own, fed `Observation`s.
+
+`streaming.Config.MaxFPS` only drops frames (a cap above the camera's rate does nothing), and
+`MaxHeight` scales a taller picture down before the conversion.
+
 ## Packages
 
 | package | what it holds |
