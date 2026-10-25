@@ -25,20 +25,36 @@ import (
 // CropJPEG are owned by the receiver and may be kept forever, and handing back a pooled buffer
 // would make that a lie in the way that corrupts an image rather than failing.
 type Encoder struct {
-	opts jpeg.Options
-	bufs sync.Pool
-	imgs sync.Pool
+	opts     jpeg.Options // the whole frame
+	cropOpts jpeg.Options // the plate crop
+	bufs     sync.Pool
+	imgs     sync.Pool
 }
 
-// NewEncoder returns an Encoder writing JPEGs at the given quality (1-100).
+// NewEncoder returns an Encoder writing JPEGs at the given quality (1-100), frames and crops alike.
 func NewEncoder(quality int) (*Encoder, error) {
-	if quality < 1 || quality > 100 {
-		return nil, fmt.Errorf("imaging: jpeg quality must be 1-100, got %d", quality)
+	return NewEncoderQualities(quality, quality)
+}
+
+// NewEncoderQualities returns an Encoder with one quality for the whole frame and another for the
+// plate crop.
+//
+// They are different jobs. A frame is 2560x1440 pixels of road, and the quality that keeps it near
+// 400 KB is plenty for a person to see which car it was. A crop is about 200x100 pixels, the
+// only picture anyone reads the plate from, and at quality 70 JPEG's 8x8 blocks eat the strokes
+// of a 5-pixel-wide character; at 92 the same crop is 8 KB instead of 5. Spending four more
+// kilobytes on the one picture that is looked at closely is not a trade worth thinking about.
+func NewEncoderQualities(frameQuality, cropQuality int) (*Encoder, error) {
+	for _, q := range []int{frameQuality, cropQuality} {
+		if q < 1 || q > 100 {
+			return nil, fmt.Errorf("imaging: jpeg quality must be 1-100, got %d", q)
+		}
 	}
 	return &Encoder{
-		opts: jpeg.Options{Quality: quality},
-		bufs: sync.Pool{New: func() any { return new(bytes.Buffer) }},
-		imgs: sync.Pool{New: func() any { return new(image.RGBA) }},
+		opts:     jpeg.Options{Quality: frameQuality},
+		cropOpts: jpeg.Options{Quality: cropQuality},
+		bufs:     sync.Pool{New: func() any { return new(bytes.Buffer) }},
+		imgs:     sync.Pool{New: func() any { return new(image.RGBA) }},
 	}, nil
 }
 
@@ -47,7 +63,7 @@ func (e *Encoder) EncodeFrame(f engine.Frame) ([]byte, error) {
 	if f.Width <= 0 || f.Height <= 0 || len(f.Pix) != f.Width*f.Height*3 {
 		return nil, ErrFrameSize
 	}
-	return e.encodeRegion(f, 0, 0, f.Width, f.Height)
+	return e.encodeRegion(f, 0, 0, f.Width, f.Height, &e.opts)
 }
 
 // EncodeCrop encodes the plate region of the frame.
@@ -61,14 +77,14 @@ func (e *Encoder) EncodeCrop(f engine.Frame, box contract.BBox) ([]byte, error) 
 		return nil, ErrFrameSize
 	}
 	x0, y0, w, h := clampedRegion(ExpandBox(box), f.Width, f.Height)
-	return e.encodeRegion(f, x0, y0, w, h)
+	return e.encodeRegion(f, x0, y0, w, h, &e.cropOpts)
 }
 
 // encodeRegion converts a packed BGR24 region to RGBA and encodes it.
 //
 // image/jpeg has no BGR path, so the conversion is unavoidable; doing it into a pooled RGBA
 // keeps it to one pass and no garbage beyond the result.
-func (e *Encoder) encodeRegion(f engine.Frame, x0, y0, w, h int) ([]byte, error) {
+func (e *Encoder) encodeRegion(f engine.Frame, x0, y0, w, h int, opts *jpeg.Options) ([]byte, error) {
 	if w <= 0 || h <= 0 {
 		return nil, errors.New("imaging: cannot encode an empty region")
 	}
@@ -103,7 +119,7 @@ func (e *Encoder) encodeRegion(f engine.Frame, x0, y0, w, h int) ([]byte, error)
 	}
 
 	buf.Reset()
-	if err := jpeg.Encode(buf, img, &e.opts); err != nil {
+	if err := jpeg.Encode(buf, img, opts); err != nil {
 		return nil, fmt.Errorf("imaging: encode jpeg: %w", err)
 	}
 

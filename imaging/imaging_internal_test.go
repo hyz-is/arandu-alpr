@@ -490,3 +490,34 @@ func TestNewEncoderRejectsImpossibleQuality(t *testing.T) {
 		}
 	}
 }
+
+func TestTheCropHasItsOwnQuality(t *testing.T) {
+	// A noisy picture, so quality moves the size: the crop of the same pixels is larger at 95 than
+	// at 40, and the whole frame is not affected by the crop's setting.
+	f := frameFunc(320, 240, func(x, y int) (byte, byte, byte) {
+		return byte(x*7 + y*13), byte(x*3 ^ y*5), byte(x * y)
+	})
+	box := contract.BBox{X: 100, Y: 100, Width: 80, Height: 40}
+
+	sharp, err := NewEncoderQualities(40, 95)
+	if err != nil {
+		t.Fatal(err)
+	}
+	soft, err := NewEncoderQualities(40, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cropSharp, _ := sharp.EncodeCrop(f, box)
+	cropSoft, _ := soft.EncodeCrop(f, box)
+	if len(cropSharp) <= len(cropSoft) {
+		t.Errorf("crop at quality 95 is %d bytes and at 40 is %d: the crop quality is not applied", len(cropSharp), len(cropSoft))
+	}
+	frameA, _ := sharp.EncodeFrame(f)
+	frameB, _ := soft.EncodeFrame(f)
+	if !bytes.Equal(frameA, frameB) {
+		t.Error("the crop's quality changed the whole frame's encoding")
+	}
+	if _, err := NewEncoderQualities(70, 0); err == nil {
+		t.Error("a crop quality of 0 was accepted")
+	}
+}
