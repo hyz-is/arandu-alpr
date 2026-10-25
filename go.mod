@@ -1,6 +1,6 @@
 module github.com/hyz-is/arandu-alpr
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/yalue/onnxruntime_go v1.31.0
