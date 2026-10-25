@@ -104,8 +104,8 @@ type ConsensusConfig struct {
 	// not penalised for the plate being small; ReferenceSharpness the Laplacian variance from which
 	// it is not penalised for being soft. Both fall off quadratically below: a plate at half the
 	// reference width is a quarter as good a witness, which is about what was measured -- on a real
-	// camera the readings of plates under 4.5% of the frame were right 3% of the time, from 6% up
-	// they were right in more than half.
+	// camera the readings of plates under 4.5% of the frame were right 0 times in 70, between 4.5%
+	// and 6% 12 times in 100, and from 6% up 53 in 100.
 	ReferenceWidth     float64
 	ReferenceSharpness float64
 }

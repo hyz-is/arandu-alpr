@@ -38,10 +38,10 @@ type GateConfig struct {
 	// MinWidthPct drops plates narrower than this fraction of the frame's width (0 = off).
 	//
 	// A plate that small is far from the camera, and the OCR does not read it: on a real camera
-	// the readings of plates under 4.5% of the frame were exact 3 times in 100, and plates
-	// between 4.5% and 6% 10 times in 100, against more than half from 6% up. They were more than
-	// half of all the OCR passes that camera paid for, and the confident wrong readings among them
-	// are what a vehicle reported under three different plates is made of. Rejecting them here costs
+	// (three clips, 40 vehicles a person could read) the readings of plates under 4.5% of the frame
+	// were exact 0 times in 70, between 4.5% and 6% 12 times in 100, and from 6% up 53 in 100. They
+	// were 41% of the OCR passes below 4.5% alone, and the confident wrong readings among them are
+	// what a vehicle reported under three different plates is made of. Rejecting them here costs
 	// arithmetic, where reading them costs a GPU pass.
 	//
 	// It is a property of the camera's view, not of plates, so it is off by default: a camera that
