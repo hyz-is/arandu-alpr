@@ -130,8 +130,10 @@ func TestTheTapGetsTheCompressedVideoWhileTheFramesStillFlow(t *testing.T) {
 	frames := readAll(t, s)
 	s.Close()
 
-	if frames < 20 {
-		t.Errorf("%d frames reached the reader, want about 30: the tap must not take them", frames)
+	// The reader keeps the newest picture and a busy one skips the rest, so what counts is what
+	// ffmpeg produced: the pictures taken and the pictures replaced add up to the clip's thirty.
+	if got := frames + int(s.Dropped()); got < 25 {
+		t.Errorf("%d pictures came out of the clip (%d read, %d replaced), want about 30: the tap must not take them", got, frames, s.Dropped())
 	}
 	select {
 	case <-tap.closed:
@@ -170,8 +172,8 @@ func TestATapThatFailsNeverStopsTheFrames(t *testing.T) {
 	}
 	frames := readAll(t, s)
 	s.Close()
-	if frames < 20 {
-		t.Errorf("%d frames after the tap failed: a full pipe stalls ffmpeg and the plates with it", frames)
+	if got := frames + int(s.Dropped()); got < 25 {
+		t.Errorf("%d pictures after the tap failed: a full pipe stalls ffmpeg and the plates with it", got)
 	}
 	select {
 	case <-tap.closed:
