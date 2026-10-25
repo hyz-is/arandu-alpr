@@ -379,6 +379,7 @@ func (e *Engine) Recognize(ctx context.Context, f engine.Frame, box contract.BBo
 		Confidence:       r.Confidence(),
 		Region:           r.Region,
 		RegionConfidence: r.RegionConfidence,
+		Probabilities:    r.Probabilities,
 	}, nil
 }
 

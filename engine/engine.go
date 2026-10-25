@@ -64,6 +64,10 @@ type Reading struct {
 
 	Region           string
 	RegionConfidence float64
+
+	// Probabilities is the OCR head's whole answer, [alpr.MaxPlateSlots][len(alpr.Alphabet)]
+	// row-major, or nil from a backend that does not keep it (alpr.Reading.Probabilities).
+	Probabilities []float32
 }
 
 // Detector finds plates in a frame.

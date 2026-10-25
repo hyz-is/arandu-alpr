@@ -144,3 +144,40 @@ func TestDecodeRegionRejectsWrongSize(t *testing.T) {
 		t.Errorf("got %q/%v from a malformed tensor", name, conf)
 	}
 }
+
+func TestProbabilitiesFromTextDecodeBackToTheText(t *testing.T) {
+	plate := "ABC1D23"
+	confs := []float64{0.9, 0.8, 0.7, 0.95, 0.6, 0.99, 0.5}
+	p := ProbabilitiesFromText(plate, confs)
+	if len(p) != MaxPlateSlots*len(Alphabet) {
+		t.Fatalf("table has %d values, want %d", len(p), MaxPlateSlots*len(Alphabet))
+	}
+	r := DecodePlate(p)
+	if r.Plate != plate {
+		t.Fatalf("decoded %q, want %q", r.Plate, plate)
+	}
+	for i, c := range confs {
+		if got := r.CharConfidences[i]; got < c-1e-6 || got > c+1e-6 {
+			t.Errorf("char %d confidence %v, want %v", i, got, c)
+		}
+	}
+	// Every slot is a distribution.
+	for slot := 0; slot < MaxPlateSlots; slot++ {
+		var sum float64
+		for _, v := range p[slot*len(Alphabet) : (slot+1)*len(Alphabet)] {
+			sum += float64(v)
+		}
+		if sum < 0.999 || sum > 1.001 {
+			t.Errorf("slot %d sums to %v", slot, sum)
+		}
+	}
+}
+
+func TestProbabilitiesFromTextSurvivesWhatIsNotAPlate(t *testing.T) {
+	// Longer than the head, outside the alphabet, no confidences: a table all the same.
+	for _, plate := range []string{"", "ABCDEFGHIJKLMNOP", "ab-é 1", "A"} {
+		if p := ProbabilitiesFromText(plate, nil); len(p) != MaxPlateSlots*len(Alphabet) {
+			t.Errorf("%q: %d values", plate, len(p))
+		}
+	}
+}
