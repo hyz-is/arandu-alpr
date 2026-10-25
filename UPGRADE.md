@@ -1,6 +1,6 @@
 # Upgrade Guide
 
-## Unreleased
+## v0.3.0
 
 Go 1.26.10 is the floor: `go.mod` declares `go 1.26.10`, because every
 vulnerability an application reaches through this module's dependencies is in the

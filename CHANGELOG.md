@@ -10,6 +10,15 @@ a release is corrected by another release and never by moving a tag.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-25
+
+### Changed
+
+- Require Go `1.26.10`, the release that fixes the standard library
+  vulnerabilities a module built on the Arandu kernel reaches (CVE-2026-111943
+  in crypto/x509 and the net/http HTTP/2 and CONNECT fixes); the manifest floor
+  is `framework = ">= 0.66"`.
+
 ## [0.2.0] - 2026-10-23
 
 ### Added
