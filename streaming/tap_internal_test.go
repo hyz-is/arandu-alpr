@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -215,5 +216,78 @@ func TestWithoutATapFfmpegHasOneOutput(t *testing.T) {
 	s.Close()
 	if joined := strings.Join(cmds[0], " "); strings.Contains(joined, "pipe:3") || strings.Contains(joined, "copy") {
 		t.Errorf("ffmpeg was run as %q, and nothing asked for a tap", joined)
+	}
+}
+
+// The filters belong to the raw frame output. The tap is a second output of the same ffmpeg, -c copy,
+// and a cap on frames or a limit on height that reached it would make the live view decode and encode
+// the picture the plates are read from.
+func TestTheFrameCapAndTheHeightLimitDoNotReachTheTap(t *testing.T) {
+	url := tapSource(t)
+	var cmds [][]string
+	o := NewOpener(2, tapRunner(&cmds))
+	o.SetGuard(Guard{AllowPrivate: true})
+	tap := newMemoryTap()
+
+	s, err := o.Open(context.Background(), Config{URL: url, Tap: tap, MaxFPS: 2, MaxHeight: tapH / 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := s.Properties(); p.Width != tapW/2 || p.Height != tapH/2 {
+		t.Errorf("the frames are %dx%d, want %dx%d", p.Width, p.Height, tapW/2, tapH/2)
+	}
+	frames := readAll(t, s)
+	s.Close()
+	if got := frames + int(s.Dropped()); got < 4 || got > 8 {
+		t.Errorf("%d pictures from a 10 fps clip behind a cap of 2 fps over 3 seconds, want about 6", got)
+	}
+
+	// Order in the command line is what scopes an output option: the filter sits before the first
+	// output and the tap's own arguments come after it, with no filter among them.
+	args := cmds[0]
+	vf, first, tapAt := -1, -1, -1
+	for i, a := range args {
+		switch {
+		case a == "-vf":
+			vf = i
+		case a == "pipe:1":
+			first = i
+		case a == "-map":
+			tapAt = i
+		}
+	}
+	if vf < 0 || first < 0 || tapAt < 0 || !(vf < first && first < tapAt) {
+		t.Fatalf("ffmpeg was run as %q: want -vf, then pipe:1, then the tap's arguments", strings.Join(args, " "))
+	}
+	for _, a := range args[first+1:] {
+		if a == "-vf" || a == "-filter:v" || strings.Contains(a, "select=") || strings.HasPrefix(a, "scale=") {
+			t.Errorf("the tap output carries a filter: %q", strings.Join(args[first+1:], " "))
+		}
+	}
+
+	select {
+	case <-tap.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the tap was not closed when the stream ended")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		return
+	}
+	file := filepath.Join(t.TempDir(), "tap.mp4")
+	if err := os.WriteFile(file, tap.bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+		"-show_entries", "stream=width,height,nb_read_frames", "-of", "csv=p=0", file).Output()
+	if err != nil {
+		t.Fatalf("ffprobe cannot read the tap: %v", err)
+	}
+	fields := strings.Split(strings.TrimSpace(string(out)), ",")
+	if len(fields) != 3 {
+		t.Fatalf("ffprobe said %q", out)
+	}
+	n, _ := strconv.Atoi(fields[2])
+	if fields[0] != strconv.Itoa(tapW) || fields[1] != strconv.Itoa(tapH) || n < 28 {
+		t.Errorf("the tap is %sx%s with %s frames, want %dx%d with all thirty of the camera's", fields[0], fields[1], fields[2], tapW, tapH)
 	}
 }
