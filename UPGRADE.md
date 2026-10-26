@@ -1,8 +1,29 @@
 # Upgrade Guide
 
-## Unreleased
+## v0.5.0
 
 Nothing breaks. `camera.Config.Consensus` is nil by default and the camera behaves as before.
+
+New settings, all off or unchanged until set (the module reads no environment variable; an
+application maps its own to these):
+
+- `camera.Config.Consensus` (`*alpr.ConsensusConfig`, start from `alpr.DefaultConsensus()`): one
+  row per vehicle instead of one per frame.
+- `camera.Config.ActiveDetectInterval` (`*time.Duration`): the detection budget while a plate is
+  followed; point it at a zero duration to read every frame of a vehicle.
+- `source.Config.MaxHeight` and `streaming.Config.MaxHeight` (int, 0 = the camera's own size):
+  scale a taller picture down before the conversion; `Stream.Properties()` and every `Frame`
+  then report the scaled size.
+- `alpr.GateConfig.MinWidthPct` (float, 0 = off): drops plates narrower than that fraction of the
+  frame before the OCR pass.
+- `imaging.NewEncoderQualities(frame, crop)`: separate JPEG qualities; `NewEncoder` is unchanged.
+- `engine.Reading.Probabilities` and `alpr.Reading.Probabilities`: new field, filled by
+  `engine/onnx`; an engine of your own that leaves it empty still works with a consensus.
+
+`MaxFPS` and `MaxHeight` apply to the frame output only. The live-view tap
+(`source.Config.VideoTap`) is a second `-c copy` output of the same ffmpeg and is neither
+filtered, decoded nor encoded: a camera capped at 5 fps still feeds its live view at the camera's
+own rate and size.
 
 One behaviour changes for everybody: `MaxFPS` no longer repeats frames. A deployment that set it
 to 10 on cameras slower than that used to read the same picture several times a second and now

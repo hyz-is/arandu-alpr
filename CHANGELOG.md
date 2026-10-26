@@ -8,7 +8,7 @@ the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A published module version is immutable: Go serves it from the proxy forever, so
 a release is corrected by another release and never by moving a tag.
 
-## [Unreleased]
+## [0.5.0] - 2026-10-26
 
 ### Added
 
@@ -25,7 +25,14 @@ a release is corrected by another release and never by moving a tag.
 - `camera.Config.ActiveDetectInterval`: the detection budget while a plate is being followed. The
   camera idles at `Spec.MinDetectInterval` and reads every frame of a vehicle once it sees one.
 - `streaming.Config.MaxHeight` and `source.Config.MaxHeight`: scale a taller picture down (1080
-  for a camera that sends 1440) before the BGR conversion, with the area filter.
+  for a camera that sends 1440) before the BGR conversion, with the area filter. Both filters
+  belong to the frame output the plates are read from: the live-view tap keeps the camera's own
+  packets and picture (`-c copy`), so neither the cap nor the limit reaches it.
+- `alpr.GateConfig.MinWidthPct`: drops plates narrower than this fraction of the frame's width
+  before the OCR pass (0 = off).
+- `imaging.NewEncoderQualities(frame, crop)`: the plate crop gets its own JPEG quality;
+  `NewEncoder(q)` is the same quality for both, as before.
+- `alpr.ProbabilitiesFromText`: a distribution for an engine that kept only the text.
 
 ### Changed
 

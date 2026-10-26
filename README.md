@@ -128,7 +128,8 @@ without a row. There is no plate-format rule: the winner is a text some frame re
 slot-by-slot best of all of them. `alpr.Consensus` is also usable on its own, fed `Observation`s.
 
 `streaming.Config.MaxFPS` only drops frames (a cap above the camera's rate does nothing), and
-`MaxHeight` scales a taller picture down before the conversion.
+`MaxHeight` scales a taller picture down before the conversion. Neither reaches the live-view tap,
+which keeps the camera's own packets.
 
 ## Packages
 
