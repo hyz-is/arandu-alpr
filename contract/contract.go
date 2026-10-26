@@ -290,6 +290,36 @@ type Overlay interface {
 	Pass(cameraID string, p Pass)
 }
 
+// Stills is optional and receives the camera's newest decoded picture when somebody asks for a
+// still of it, such as a tile of a grid of cameras that is not worth a video.
+//
+// Nothing is kept by the service. Seen is called for EVERY frame the camera receives, on the
+// camera's own goroutine and before anything is done to the frame, and it says whether the consumer
+// wants this frame's pixels; a camera nobody asks a still of pays for that call and nothing else,
+// which must be a few atomic operations. When it says yes the camera calls Still with the pixels,
+// and Still copies what it needs and returns: the frame is lent from the capture's ring and goes
+// back to it the moment the call returns. The consumer reuses the picture the loop already decoded,
+// so a still opens no connection to the camera and decodes nothing.
+//
+// Both calls must not wait.
+type Stills interface {
+	// Seen reports a frame arriving: when the camera captured it (zero when the capture does not
+	// say) and its size. It is how the consumer knows a camera is alive.
+	Seen(cameraID string, capturedAt time.Time, width, height int) (wantPixels bool)
+	// Still hands over the pixels of a frame Seen asked for.
+	Still(cameraID string, s Still)
+}
+
+// Still is one decoded frame, lent for the duration of the call that carries it.
+type Still struct {
+	// Pix is the picture as packed BGR24, Width*Height*3 bytes. It is the capture's buffer: copy
+	// it, and do not keep it.
+	Pix           []byte
+	Width, Height int
+	// CapturedAt is when the frame left the camera, zero when the capture does not say.
+	CapturedAt time.Time
+}
+
 // Pass is one detection pass over one frame.
 type Pass struct {
 	// Width and Height are the frame's size in pixels, which the boxes are in.

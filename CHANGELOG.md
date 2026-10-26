@@ -8,6 +8,17 @@ the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A published module version is immutable: Go serves it from the proxy forever, so
 a release is corrected by another release and never by moving a tag.
 
+## [Unreleased]
+
+### Added
+
+- `contract.Stills` and `camera.Config.Stills`: a consumer that is told every frame a camera receives
+  (`Seen`, a few atomic operations) and is handed the pixels of the one it asks for (`Still`), lent
+  for the call. It is how a page shows a still of a camera that is not worth a video: the picture the
+  loop already decoded, with no new connection to the camera and no second decode. The hook runs
+  before the brightness adjustment and before the stale test, and a camera with no consumer pays
+  one nil check.
+
 ## [0.5.0] - 2026-10-26
 
 ### Added

@@ -95,6 +95,7 @@ type Config struct {
 	Observer contract.Observer // optional
 	Preview  contract.Preview  // optional
 	Overlay  contract.Overlay  // optional; told what every detection pass found, while watched
+	Stills   contract.Stills   // optional; told every frame arrives, and handed the pixels of the one it asks for
 	Metrics  metrics.Registry  // optional; Discard when nil
 	Logger   *slog.Logger      // optional; discards when nil
 

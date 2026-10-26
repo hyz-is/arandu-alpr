@@ -28,6 +28,14 @@ func (c *Camera) step(ctx context.Context, f engine.Frame) stepResult {
 	now := c.now()
 	c.m.framesReceived.Inc()
 
+	// A still is asked of the frame as it came from the camera: before the brightness adjustment
+	// below rewrites it in place, and before the stale test, which only judges whether it is worth a
+	// GPU pass and not whether somebody wants to see it. Seen is a few atomic operations; the pixels
+	// are handed over only when a consumer has asked, and they are lent for the call.
+	if c.cfg.Stills != nil && c.cfg.Stills.Seen(c.cfg.Spec.ID, f.CapturedAt, f.Width, f.Height) && len(f.Pix) > 0 {
+		c.cfg.Stills.Still(c.cfg.Spec.ID, contract.Still{Pix: f.Pix, Width: f.Width, Height: f.Height, CapturedAt: f.CapturedAt})
+	}
+
 	// Every frame, detected on or not: a vehicle that has left is decided by the clock, and the
 	// clock here is the frames arriving.
 	c.flushConsensus(ctx, now)
