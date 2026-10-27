@@ -1,5 +1,15 @@
 # Upgrade Guide
 
+## v0.6.0
+
+Nothing breaks. `camera.Config.Stills` is nil by default and a camera pays one nil check.
+
+New and optional: `contract.Stills` (`Seen` is called for every frame a camera receives and says
+whether anyone waits for pixels; `Still` is called only then and is handed the frame's pixels,
+lent for the call, so copy before returning) and `camera.Config.Stills`. A node that serves still
+pictures of its cameras sets it and copies what it needs; it needs `arandu-rtc` v0.2.0 for the
+pass kind of those pictures.
+
 ## v0.5.0
 
 Nothing breaks. `camera.Config.Consensus` is nil by default and the camera behaves as before.
