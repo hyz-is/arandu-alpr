@@ -1219,3 +1219,35 @@ func TestProbeAsksForThePixelFormat(t *testing.T) {
 		t.Errorf("ffprobe was not asked for pix_fmt: %v", asked)
 	}
 }
+
+func TestMeasureRateCountsTheFramesThatArrive(t *testing.T) {
+	var asked []string
+	o := NewOpener(1, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		asked = args
+		return exec.CommandContext(ctx, "sh", "-c", `printf %s '{"streams":[{"nb_read_packets":"50"}]}'`)
+	})
+	o.SetGuard(Guard{AllowPrivate: true})
+	fps, err := o.MeasureRate(context.Background(), Config{URL: "rtsp://cam/live"}, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fps != 10 {
+		t.Errorf("50 frames in 5 seconds is 10 fps, got %v", fps)
+	}
+	joined := strings.Join(asked, " ")
+	for _, want := range []string{"-count_packets", "-read_intervals %+5", "nb_read_packets", "-rtsp_transport tcp"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("ffprobe was not asked %q: %v", want, asked)
+		}
+	}
+}
+
+func TestMeasureRateOfAStreamWithNoFramesIsAnError(t *testing.T) {
+	o := NewOpener(1, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sh", "-c", `printf %s '{"streams":[{"nb_read_packets":"0"}]}'`)
+	})
+	o.SetGuard(Guard{AllowPrivate: true})
+	if _, err := o.MeasureRate(context.Background(), Config{URL: "rtsp://cam/live"}, time.Second); err == nil {
+		t.Error("a stream that sent nothing has no rate")
+	}
+}

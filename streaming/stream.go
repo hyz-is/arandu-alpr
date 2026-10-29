@@ -672,6 +672,68 @@ func (o *Opener) Probe(ctx context.Context, cfg Config) (Properties, error) {
 	return Properties{Width: s.Width, Height: s.Height, FPS: parseRational(s.FrameRate), Codec: s.Codec, PixFmt: s.PixFmt}, nil
 }
 
+// MeasureRate counts the frames the camera actually sends in window of stream time and answers
+// frames per second.
+//
+// Probe's FPS is ffprobe's r_frame_rate, a guess: a camera whose stream carries no timing in its
+// headers -- several recent Hikvision models -- reports a rate it does not send (24.9 for a camera
+// set to 10). Counting what arrives answers what the camera does, at the cost of reading window of
+// video. It takes an open slot, like Probe.
+func (o *Opener) MeasureRate(ctx context.Context, cfg Config, window time.Duration) (float64, error) {
+	if window <= 0 {
+		window = 5 * time.Second
+	}
+	cfg = cfg.withDefaults()
+	url, err := cfg.authenticatedURL()
+	if err != nil {
+		return 0, err
+	}
+	url, guarded, err := o.guard.Address(ctx, url)
+	if err != nil {
+		return 0, err
+	}
+
+	release, err := o.acquire(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(ctx, cfg.OpenTimeout+2*window)
+	defer cancel()
+
+	secs := strconv.FormatFloat(window.Seconds(), 'f', -1, 64)
+	args := append(append(guarded, transportArgs(url)...),
+		"-select_streams", "v:0",
+		"-read_intervals", "%+"+secs,
+		"-count_packets",
+		"-show_entries", "stream=nb_read_packets",
+		"-of", "json",
+		url,
+	)
+	cmd := o.runner(ctx, "ffprobe", append([]string{"-v", "error"}, args...)...)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("streaming: rate measure failed: %w", err)
+	}
+	var parsed struct {
+		Streams []struct {
+			Packets string `json:"nb_read_packets"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return 0, fmt.Errorf("streaming: rate measure output: %w", err)
+	}
+	if len(parsed.Streams) == 0 {
+		return 0, errors.New("streaming: rate measure found no video stream")
+	}
+	n, err := strconv.Atoi(parsed.Streams[0].Packets)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("streaming: rate measure read no frames (%q)", parsed.Streams[0].Packets)
+	}
+	return float64(n) / window.Seconds(), nil
+}
+
 // parseRational reads ffprobe's `num/den` frame rate.
 //
 // A stream that reports `0/0` is not an error: many cameras do it, and the pipeline measures the

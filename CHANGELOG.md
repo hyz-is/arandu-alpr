@@ -8,6 +8,15 @@ the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A published module version is immutable: Go serves it from the proxy forever, so
 a release is corrected by another release and never by moving a tag.
 
+## [0.6.3] - 2026-10-29
+
+### Added
+
+- `streaming.Opener.MeasureRate`: counts the frames a camera actually sends in a window of stream
+  time and answers frames per second. `Probe`'s FPS is ffprobe's `r_frame_rate`, which several
+  recent Hikvision models report wrong (24.9 for a camera set to 10) because their stream carries
+  no timing in its headers.
+
 ## [0.6.2] - 2026-10-29
 
 ### Added
