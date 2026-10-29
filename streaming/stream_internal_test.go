@@ -746,7 +746,7 @@ func TestRTSPTransportIsOnlyPassedForRTSP(t *testing.T) {
 func TestHardwareDecodeIsOffByDefault(t *testing.T) {
 	// CPU decode has to stay the default. A machine without NVDEC that silently got cuvid flags
 	// would fail to open every camera, and the error names a decoder rather than a setting.
-	if args := (Config{}).hwaccelArgs("h264"); args != nil {
+	if args := (Config{}).hwaccelArgs(Properties{Codec: "h264"}); args != nil {
 		t.Errorf("an unconfigured Config asked for hardware decode: %v", args)
 	}
 }
@@ -757,7 +757,7 @@ func TestCuvidNamesTheDecoderNotJustTheAccelerator(t *testing.T) {
 	// help, and the CPU cost it was meant to remove is still there.
 	//
 	// The Rust and C++ engines both pass -c:v explicitly for the same reason.
-	args := Config{HWAccel: "cuvid", HWDevice: -1}.hwaccelArgs("h264")
+	args := Config{HWAccel: "cuvid", HWDevice: -1}.hwaccelArgs(Properties{Codec: "h264"})
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-c:v h264_cuvid") {
 		t.Errorf("cuvid did not name the decoder: %v", args)
@@ -772,7 +772,7 @@ func TestDecoderFollowsTheProbedCodec(t *testing.T) {
 		"hevc":  "hevc_cuvid",
 		"mjpeg": "mjpeg_cuvid",
 	} {
-		args := Config{HWAccel: "cuvid", HWDevice: -1}.hwaccelArgs(codec)
+		args := Config{HWAccel: "cuvid", HWDevice: -1}.hwaccelArgs(Properties{Codec: codec})
 		if !strings.Contains(strings.Join(args, " "), want) {
 			t.Errorf("codec %q gave %v, want %s", codec, args, want)
 		}
@@ -782,7 +782,7 @@ func TestDecoderFollowsTheProbedCodec(t *testing.T) {
 func TestUnknownCodecFallsBackToSoftwareRatherThanFailing(t *testing.T) {
 	// A codec NVDEC cannot handle must cost that one camera its hardware decode, never its
 	// connection. Naming a decoder that does not exist makes ffmpeg refuse to start.
-	args := Config{HWAccel: "cuvid", HWDevice: -1}.hwaccelArgs("av1")
+	args := Config{HWAccel: "cuvid", HWDevice: -1}.hwaccelArgs(Properties{Codec: "av1"})
 	if strings.Contains(strings.Join(args, " "), "-c:v") {
 		t.Errorf("a codec NVDEC does not decode still got a decoder: %v", args)
 	}
@@ -791,7 +791,7 @@ func TestUnknownCodecFallsBackToSoftwareRatherThanFailing(t *testing.T) {
 func TestHardwareDeviceIsSelectable(t *testing.T) {
 	// With one card this does not matter. With two it decides whether the fleet shares them or
 	// whether device 0 quietly decodes for all of it while device 1 idles.
-	args := Config{HWAccel: "cuvid", HWDevice: 1}.hwaccelArgs("h264")
+	args := Config{HWAccel: "cuvid", HWDevice: 1}.hwaccelArgs(Properties{Codec: "h264"})
 	if !strings.Contains(strings.Join(args, " "), "-gpu 1") {
 		t.Errorf("device 1 was not selected: %v", args)
 	}
@@ -801,7 +801,7 @@ func TestCuvidKeepsTheFrameInSystemMemory(t *testing.T) {
 	// `-hwaccel cuvid` leaves the decoded frame on the GPU, and the bgr24 pipe cannot reach it:
 	// ffmpeg 6.1 stops on the first frame with "Impossible to convert between the formats". The
 	// decoder named alone, with -gpu, decodes on NVDEC and hands back a frame the pipe can carry.
-	args := strings.Join(Config{HWAccel: "cuvid", HWDevice: 0}.hwaccelArgs("h264"), " ")
+	args := strings.Join(Config{HWAccel: "cuvid", HWDevice: 0}.hwaccelArgs(Properties{Codec: "h264"}), " ")
 	if strings.Contains(args, "-hwaccel") {
 		t.Errorf("cuvid passed -hwaccel, which fails every camera on this image's ffmpeg: %s", args)
 	}
@@ -934,7 +934,7 @@ func TestHardwareFlagsComeBeforeTheInput(t *testing.T) {
 	// They choose how the input is opened, so ffmpeg ignores them after -i. The failure is
 	// silent: the camera opens and decodes on the CPU.
 	cfg := Config{HWAccel: "cuvid", HWDevice: 0}
-	args := append(cfg.hwaccelArgs("h264"), transportArgs("rtsp://cam/live")...)
+	args := append(cfg.hwaccelArgs(Properties{Codec: "h264"}), transportArgs("rtsp://cam/live")...)
 	args = append(args, "-i", "rtsp://cam/live")
 
 	hw, input := -1, -1
@@ -948,5 +948,156 @@ func TestHardwareFlagsComeBeforeTheInput(t *testing.T) {
 	}
 	if hw < 0 || input < 0 || hw > input {
 		t.Fatalf("hardware flags are not before -i: %v", args)
+	}
+}
+
+func TestCuvidResizesOnTheDecoderWhenMaxHeightIsSet(t *testing.T) {
+	cfg := Config{HWAccel: "cuvid", HWDevice: 0, MaxHeight: 1080}
+	got := strings.Join(cfg.hwaccelArgs(Properties{Width: 2560, Height: 1440, Codec: "h264"}), " ")
+	if got != "-c:v h264_cuvid -gpu 0 -resize 1920x1080" {
+		t.Errorf("hwaccelArgs = %q", got)
+	}
+	got = strings.Join(cfg.hwaccelArgs(Properties{Width: 3840, Height: 2160, Codec: "hevc"}), " ")
+	if got != "-c:v hevc_cuvid -gpu 0 -resize 1920x1080" {
+		t.Errorf("hwaccelArgs = %q", got)
+	}
+}
+
+func TestCuvidResizeKeepsProportionsAndEvenSides(t *testing.T) {
+	cfg := Config{HWAccel: "cuvid", HWDevice: -1, MaxHeight: 1080}
+	for _, size := range [][2]int{{2592, 1944}, {1000, 1500}, {2688, 1520}, {2561, 1441}} {
+		w, h, ok := cfg.decoderResize(Properties{Width: size[0], Height: size[1], Codec: "h264"})
+		if !ok || w%2 != 0 || h%2 != 0 || h != 1080 {
+			t.Errorf("%dx%d -> %dx%d (%v), want even sides and 1080 lines", size[0], size[1], w, h, ok)
+		}
+	}
+	if w, h, _ := cfg.decoderResize(Properties{Width: 2592, Height: 1944, Codec: "h264"}); w != 1440 || h != 1080 {
+		t.Errorf("2592x1944 -> %dx%d, want 1440x1080", w, h)
+	}
+	odd := Config{HWAccel: "cuvid", MaxHeight: 1081}
+	if w, h, ok := odd.decoderResize(Properties{Width: 2560, Height: 1440, Codec: "h264"}); !ok || h != 1080 || w%2 != 0 {
+		t.Errorf("odd MaxHeight -> %dx%d (%v), want 1080 lines and an even width", w, h, ok)
+	}
+}
+
+func TestCuvidDoesNotResizeWhatItShouldNot(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cfg   Config
+		props Properties
+	}{
+		"no limit":          {Config{HWAccel: "cuvid", HWDevice: -1}, Properties{Width: 2560, Height: 1440, Codec: "h264"}},
+		"source is smaller": {Config{HWAccel: "cuvid", HWDevice: -1, MaxHeight: 1080}, Properties{Width: 1280, Height: 720, Codec: "h264"}},
+		"source is equal":   {Config{HWAccel: "cuvid", HWDevice: -1, MaxHeight: 1080}, Properties{Width: 1920, Height: 1080, Codec: "h264"}},
+		"unknown width":     {Config{HWAccel: "cuvid", HWDevice: -1, MaxHeight: 1080}, Properties{Height: 1440, Codec: "h264"}},
+		"software decode":   {Config{MaxHeight: 1080}, Properties{Width: 2560, Height: 1440, Codec: "h264"}},
+		"other accelerator": {Config{HWAccel: "vaapi", HWDevice: -1, MaxHeight: 1080}, Properties{Width: 2560, Height: 1440, Codec: "h264"}},
+		"codec NVDEC lacks": {Config{HWAccel: "cuvid", HWDevice: -1, MaxHeight: 1080}, Properties{Width: 2560, Height: 1440, Codec: "av1"}},
+	} {
+		if args := strings.Join(tc.cfg.hwaccelArgs(tc.props), " "); strings.Contains(args, "-resize") {
+			t.Errorf("%s: hwaccelArgs = %q, want no -resize", name, args)
+		}
+	}
+}
+
+// ffmpegArgsRunner answers ffprobe with a camera of the given geometry and codec, and answers
+// ffmpeg with frames of the given size while recording the arguments it was started with.
+func ffmpegArgsRunner(t *testing.T, probeW, probeH int, codec string, frameW, frameH int, argv *[]string) Runner {
+	t.Helper()
+	frameSize := frameW * frameH * 3
+	raw := make([]byte, 2*frameSize)
+	for i := range raw {
+		raw[i] = byte(i % 251)
+	}
+	path := filepath.Join(t.TempDir(), "frames.bgr24")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	probe := fmt.Sprintf(`{"streams":[{"width":%d,"height":%d,"r_frame_rate":"25/1","codec_name":%q}]}`, probeW, probeH, codec)
+	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if strings.Contains(name, "ffprobe") {
+			return exec.CommandContext(ctx, "sh", "-c", "printf %s "+strconv.Quote(probe))
+		}
+		*argv = append([]string(nil), args...)
+		return exec.CommandContext(ctx, "cat", path)
+	}
+}
+
+func openForArgs(t *testing.T, cfg Config, probeW, probeH int, codec string, frameW, frameH int) ([]string, Properties) {
+	t.Helper()
+	var argv []string
+	o := NewOpener(2, ffmpegArgsRunner(t, probeW, probeH, codec, frameW, frameH, &argv))
+	o.SetGuard(Guard{AllowPrivate: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cfg.URL = "rtsp://cam/live"
+	s, err := o.Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+	f, ok := s.Next(ctx)
+	if !ok {
+		t.Fatalf("no frame: %v", s.Err())
+	}
+	if len(f.Bytes) != frameW*frameH*3 {
+		t.Errorf("frame is %d bytes, want %d", len(f.Bytes), frameW*frameH*3)
+	}
+	f.Release()
+	return argv, s.Properties()
+}
+
+func TestOpenScalesOnTheDecoderAndNotOnTheCPUWithCuvid(t *testing.T) {
+	argv, props := openForArgs(t, Config{HWAccel: "cuvid", HWDevice: 0, MaxHeight: 1080}, 2560, 1440, "h264", 1920, 1080)
+	want := "-loglevel error -c:v h264_cuvid -gpu 0 -resize 1920x1080 -rtsp_transport tcp -i rtsp://cam/live " +
+		"-an -filter_threads 1 -vsync passthrough -f rawvideo -pix_fmt bgr24 pipe:1"
+	if got := strings.Join(argv, " "); got != want {
+		t.Errorf("ffmpeg args\n got: %s\nwant: %s", got, want)
+	}
+	if props.Width != 1920 || props.Height != 1080 {
+		t.Errorf("properties = %dx%d, want 1920x1080", props.Width, props.Height)
+	}
+	for _, a := range argv {
+		if strings.HasPrefix(a, "scale=") || a == "-vf" {
+			t.Errorf("a CPU filter was added next to the decoder resize: %v", argv)
+		}
+	}
+}
+
+func TestOpenWithCuvidAndFPSCapKeepsTheSelectOnly(t *testing.T) {
+	argv, _ := openForArgs(t, Config{HWAccel: "cuvid", HWDevice: 0, MaxHeight: 1080, MaxFPS: 10}, 2560, 1440, "hevc", 1920, 1080)
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "-c:v hevc_cuvid -gpu 0 -resize 1920x1080") {
+		t.Errorf("no decoder resize: %s", joined)
+	}
+	if !strings.Contains(joined, "-vf select=") || strings.Contains(joined, "scale=") {
+		t.Errorf("want a select and no scale: %s", joined)
+	}
+}
+
+func TestOpenWithoutCuvidStillScalesOnTheCPU(t *testing.T) {
+	argv, props := openForArgs(t, Config{MaxHeight: 1080}, 2560, 1440, "h264", 1920, 1080)
+	joined := strings.Join(argv, " ")
+	if strings.Contains(joined, "-resize") || strings.Contains(joined, "cuvid") {
+		t.Errorf("software decode got a decoder option: %s", joined)
+	}
+	if !strings.Contains(joined, "-vf scale=1920:1080:flags=area") {
+		t.Errorf("software decode lost its scale filter: %s", joined)
+	}
+	if !strings.Contains(joined, "-filter_threads 1") {
+		t.Errorf("filter threads not limited: %s", joined)
+	}
+	if props.Width != 1920 || props.Height != 1080 {
+		t.Errorf("properties = %dx%d, want 1920x1080", props.Width, props.Height)
+	}
+}
+
+func TestOpenWithCuvidAndNoLimitKeepsTheCameraSize(t *testing.T) {
+	argv, props := openForArgs(t, Config{HWAccel: "cuvid", HWDevice: 0}, 1280, 720, "h264", 1280, 720)
+	joined := strings.Join(argv, " ")
+	if strings.Contains(joined, "-resize") || strings.Contains(joined, "-vf") {
+		t.Errorf("an untouched picture got a resize or a filter: %s", joined)
+	}
+	if props.Width != 1280 || props.Height != 720 {
+		t.Errorf("properties = %dx%d, want 1280x720", props.Width, props.Height)
 	}
 }

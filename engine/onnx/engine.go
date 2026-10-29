@@ -61,13 +61,12 @@ func (c EngineConfig) withDefaults() EngineConfig {
 
 // detectorSession is a runner plus the per-frame scratch that only its holder may touch.
 //
-// The scaler and the postprocessor travel WITH the session rather than being shared, because
-// both hold reusable buffers and neither is safe for concurrent use. Bundling them is what makes
-// "hold the session" and "hold the buffers" the same statement -- there is no second rule to
-// remember and no second thing to get wrong.
+// The postprocessor travels WITH the session rather than being shared, because it holds reusable
+// buffers and is not safe for concurrent use. Bundling them is what makes "hold the session" and
+// "hold the buffers" the same statement. The letterbox is the exception, and on purpose: it is
+// built before a session is borrowed, from the engine's own scratch pool (see Detect).
 type detectorSession struct {
 	runner *detectorRunner
-	scaler *imaging.Scaler
 	post   *engine.Postprocessor
 }
 
@@ -92,6 +91,10 @@ type Engine struct {
 	ocrs      map[int]*alpr.SessionPool[*ocrSession]
 
 	ready atomic.Bool
+
+	// scratch holds the letterbox buffers that are built before a session is borrowed. It is a
+	// field and not package state, and it holds as many as there are frames in flight.
+	scratch sync.Pool
 
 	mu      sync.Mutex
 	reports []engine.ModelReport
@@ -200,15 +203,11 @@ func (e *Engine) newDetectorPool(device int) (*alpr.SessionPool[*detectorSession
 		}
 		e.record(report)
 
-		scaler, err := imaging.NewScaler(e.cfg.Postprocess.InputSize)
-		if err != nil {
-			return nil, err
-		}
 		post, err := engine.NewPostprocessor(e.cfg.Postprocess)
 		if err != nil {
 			return nil, err
 		}
-		return &detectorSession{runner: built.(*detectorRunner), scaler: scaler, post: post}, nil
+		return &detectorSession{runner: built.(*detectorRunner), post: post}, nil
 	})
 }
 
@@ -286,12 +285,48 @@ func (e *Engine) Ready() error {
 	return nil
 }
 
+// letterboxScratch is what one Detect call needs to letterbox a frame without holding a session:
+// a scaler, which keeps the resize weights of the geometry it saw last, and the tensor it fills.
+// Whoever holds the scratch is the only one using it.
+type letterboxScratch struct {
+	scaler *imaging.Scaler
+	tensor []float32
+}
+
+// getScratch returns a scratch from the pool, or builds one the size of the detector's input.
+func (e *Engine) getScratch() (*letterboxScratch, error) {
+	if s, ok := e.scratch.Get().(*letterboxScratch); ok {
+		return s, nil
+	}
+	scaler, err := imaging.NewScaler(e.cfg.Postprocess.InputSize)
+	if err != nil {
+		return nil, err
+	}
+	return &letterboxScratch{scaler: scaler, tensor: make([]float32, scaler.TensorLen())}, nil
+}
+
 // Detect runs the detector over one frame.
 func (e *Engine) Detect(ctx context.Context, f engine.Frame, dst []engine.Candidate) ([]engine.Candidate, error) {
 	if err := e.Ready(); err != nil {
 		return dst, err
 	}
 	dev := e.pick()
+
+	// The letterbox is the CPU half of detection, and it is done BEFORE a session is borrowed. A
+	// session holds a GPU slot; while the host is short of CPU, a letterbox run after the borrow
+	// kept the slot busy for as long as the scheduler took to give the thread a core, and the
+	// GPU idled behind it. Done first, the slot is held for the copy and the inference only.
+	scratch, err := e.getScratch()
+	if err != nil {
+		e.mErrDetect.Inc()
+		return dst, err
+	}
+	defer e.scratch.Put(scratch)
+	lb, err := scratch.scaler.Letterbox(f, scratch.tensor)
+	if err != nil {
+		e.mErrDetect.Inc()
+		return dst, err
+	}
 
 	borrowCtx, cancel := context.WithTimeout(ctx, e.cfg.BorrowTimeout)
 	defer cancel()
@@ -312,10 +347,11 @@ func (e *Engine) Detect(ctx context.Context, f engine.Frame, dst []engine.Candid
 	e.mInUse.Add(1)
 	defer e.mInUse.Add(-1)
 
-	lb, err := sess.scaler.Letterbox(f, sess.runner.inputBuffer())
-	if err != nil {
+	// The session's input tensor is the memory ONNX Runtime reads, so the finished letterbox is
+	// copied into it: one sequential copy of 4.9 MB at 640x640, against the resize it replaces.
+	if n := copy(sess.runner.inputBuffer(), scratch.tensor); n != len(scratch.tensor) {
 		e.mErrDetect.Inc()
-		return dst, err
+		return dst, fmt.Errorf("alpr/onnx: detector input holds %d values, the letterbox has %d", n, len(scratch.tensor))
 	}
 
 	// The context is deliberately not wired to RunOptions.Terminate. Terminate is a sticky

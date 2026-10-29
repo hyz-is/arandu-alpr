@@ -286,6 +286,10 @@ type Config struct {
 	// while a frame is 44% smaller to convert, to pipe and to hold three of per camera. A camera
 	// no taller than this is never scaled UP. It does not touch the Tap, which keeps the camera's
 	// own picture.
+	//
+	// With the cuvid decoder the scaling is done by NVDEC (-resize) and the smaller picture is
+	// the only one that reaches system memory; the CPU scale filter is not added. Its resampling
+	// is the decoder's, not the area filter's. Any other decoder scales with the filter.
 	MaxHeight int
 
 	// Tap receives a copy of the camera's compressed video as fragmented MP4, written by the same
@@ -391,19 +395,27 @@ func (c Config) MarshalJSON() ([]byte, error) {
 // between the formats", exit 218, and so did 4.4 under the Python worker. `-c:v h264_cuvid -gpu N`
 // decodes on NVDEC and hands the frame back in system memory -- measured on a T4, and the form the
 // Python worker runs on every camera in production.
-func (c Config) hwaccelArgs(codec string) []string {
+//
+// With a MaxHeight below the picture's own height, the cuvid decoder also gets -resize WxH: NVDEC
+// scales on the GPU, and only the smaller picture crosses to system memory. Without it the full
+// frame came back to RAM, was converted to bgr24 by swscale on the CPU and was then scaled again
+// by the scale filter; the swscale conversion alone was 43% of the ffmpeg profile on a loaded node.
+func (c Config) hwaccelArgs(props Properties) []string {
 	if c.HWAccel == "" {
 		return nil
 	}
 
 	if c.HWAccel == "cuvid" {
-		dec := cuvidDecoder(codec)
+		dec := cuvidDecoder(props.Codec)
 		if dec == "" {
 			return nil // a codec NVDEC does not decode: software, for this camera only
 		}
 		args := []string{"-c:v", dec}
 		if c.HWDevice >= 0 {
 			args = append(args, "-gpu", strconv.Itoa(c.HWDevice))
+		}
+		if w, h, ok := c.decoderResize(props); ok {
+			args = append(args, "-resize", strconv.Itoa(w)+"x"+strconv.Itoa(h))
 		}
 		return args
 	}
@@ -413,6 +425,27 @@ func (c Config) hwaccelArgs(codec string) []string {
 		args = append(args, "-hwaccel_device", strconv.Itoa(c.HWDevice))
 	}
 	return args
+}
+
+// decoderResize reports the size NVDEC is asked to decode to, and false when the picture is left
+// at its own size or is scaled by the filter chain instead.
+//
+// It holds only for the cuvid decoder, only when MaxHeight is set, and only for a source taller
+// than MaxHeight: a smaller picture is never scaled up. Both sides are even, as the pixel formats a
+// camera sends are subsampled in pairs, and the width keeps the source's proportions.
+func (c Config) decoderResize(props Properties) (w, h int, ok bool) {
+	if c.HWAccel != "cuvid" || cuvidDecoder(props.Codec) == "" {
+		return 0, 0, false
+	}
+	if c.MaxHeight <= 0 || props.Height <= c.MaxHeight || props.Width <= 0 {
+		return 0, 0, false
+	}
+	h = c.MaxHeight &^ 1
+	w = (props.Width*h/props.Height + 1) &^ 1
+	if w < 2 || h < 2 || h >= props.Height {
+		return 0, 0, false
+	}
+	return w, h, true
 }
 
 // cuvidDecoder maps a probed codec to its NVDEC decoder, and returns "" for anything NVDEC does
@@ -653,7 +686,15 @@ func (o *Opener) Open(ctx context.Context, cfg Config) (*Stream, error) {
 
 	// What the pipe carries is what the filters make of the picture, and the ring, the reads and
 	// every frame handed out are sized by that. Properties reports it, not the camera's own size.
-	filter, outW, outH := cfg.filterArgs(props.Width, props.Height)
+	//
+	// When the decoder scales (cuvid with a MaxHeight), the picture reaches the filter chain
+	// already at its final size, so the chain sees that size and adds no scale of its own.
+	source := props
+	chainW, chainH := source.Width, source.Height
+	if w, h, ok := cfg.decoderResize(source); ok {
+		chainW, chainH = w, h
+	}
+	filter, outW, outH := cfg.filterArgs(chainW, chainH)
 	props.Width, props.Height = outW, outH
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -664,8 +705,12 @@ func (o *Opener) Open(ctx context.Context, cfg Config) (*Stream, error) {
 	// would describe the past.
 	s := newStream(props, cfg, cancel)
 
-	args := append(append(cfg.hwaccelArgs(props.Codec), guarded...), transportArgs(url)...)
+	args := append(append(cfg.hwaccelArgs(source), guarded...), transportArgs(url)...)
 	args = append(args, "-i", url, "-an")
+	// One thread for the filter graph. The graph is a select and a pixel-format conversion on a
+	// single stream; the extra threads ffmpeg starts per filter cost more in scheduling and
+	// synchronisation than they save -- measured, 15 to 18% less CPU per camera.
+	args = append(args, "-filter_threads", "1")
 	args = append(args, filter...)
 	args = append(args,
 		"-vsync", "passthrough",
@@ -682,6 +727,8 @@ func (o *Opener) Open(ctx context.Context, cfg Config) (*Stream, error) {
 		cancel()
 		return nil, fmt.Errorf("streaming: stdout: %w", err)
 	}
+	// Best effort: a refusal leaves the kernel's default of 64 KiB, which is slower and works.
+	growPipe(stdout, framePipeSize)
 	var tap *os.File
 	if cfg.Tap != nil {
 		var write *os.File

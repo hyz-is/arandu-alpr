@@ -8,6 +8,26 @@ the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A published module version is immutable: Go serves it from the proxy forever, so
 a release is corrected by another release and never by moving a tag.
 
+## [0.6.1] - 2026-10-29
+
+Less CPU per camera and per node, measured on a 32-vCPU node reading 23 cameras: ffmpeg took
+about 1900% of CPU and the Go process about 700%, with inference already on the GPU.
+
+### Changed
+
+- `streaming.Config.MaxHeight` with the cuvid decoder is applied by NVDEC (`-resize WxH` on the
+  decoder, both sides even, proportional to the source) and the CPU `scale` filter is not added.
+  Before, every frame came back to system memory at the camera's size, was converted by swscale
+  and then scaled. Without cuvid nothing changes: the `scale` filter stays. NVDEC resamples with
+  its own filter, not with `flags=area`.
+- The reading ffmpeg runs with `-filter_threads 1` (15 to 18% less CPU per ffmpeg, measured).
+- The pipe ffmpeg writes the frames to is grown to 1 MiB on Linux (`F_SETPIPE_SZ`), so a frame
+  crosses it in fewer write and read round trips; a refusal from the host is ignored.
+- `engine/onnx`: the detector's letterbox runs before a session is borrowed, into a scratch tensor
+  of the engine, and is copied into the session's input. The GPU slot is no longer held while the
+  CPU waits for a core. A frame that then finds no free session (`engine.ErrBusy`) has paid its
+  letterbox.
+
 ## [0.6.0] - 2026-10-26
 
 ### Added

@@ -1,5 +1,12 @@
 # Upgrade Guide
 
+## v0.6.1
+
+Nothing breaks and nothing has to be written. Set `MaxHeight` (1080 for cameras that send 1440 or
+more) to get the decoder-side scaling on a node that decodes with cuvid; without it the frames keep
+the camera's size, as before. On a node that decodes in software, `MaxHeight` still scales on the
+CPU. `Stream.Properties()` and every `Frame` report the size after scaling, as in v0.5.0.
+
 ## v0.6.0
 
 Nothing breaks. `camera.Config.Stills` is nil by default and a camera pays one nil check.

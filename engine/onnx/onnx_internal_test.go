@@ -7,6 +7,7 @@ import (
 	ort "github.com/yalue/onnxruntime_go"
 
 	"github.com/hyz-is/arandu-alpr/engine"
+	"github.com/hyz-is/arandu-alpr/imaging"
 )
 
 // These tests cover everything in this package that does not need ONNX Runtime loaded, which is
@@ -413,4 +414,72 @@ func TestORTFormatOnCUDAIsFlagged(t *testing.T) {
 	if w := checkFormat("/models/detector.ort", -1); w != "" {
 		t.Errorf("a .ort on CPU was flagged: %s", w)
 	}
+}
+
+func TestLetterboxScratchNeedsNoSession(t *testing.T) {
+	// The letterbox runs before a session is borrowed, so it has to work on an engine that has
+	// none: this one has no pools at all.
+	e := &Engine{cfg: EngineConfig{Postprocess: engine.PostprocessConfig{InputSize: 640}}}
+
+	frame := engine.Frame{Width: 64, Height: 36, Pix: make([]byte, 64*36*3)}
+	for i := range frame.Pix {
+		frame.Pix[i] = byte(i * 7)
+	}
+
+	scratch, err := e.getScratch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lb, err := scratch.scaler.Letterbox(frame, scratch.tensor)
+	if err != nil {
+		t.Fatalf("letterbox: %v", err)
+	}
+	if len(scratch.tensor) != 3*640*640 {
+		t.Fatalf("tensor holds %d values, want %d", len(scratch.tensor), 3*640*640)
+	}
+	if lb.FrameW != 64 || lb.FrameH != 36 {
+		t.Errorf("letterbox = %+v, want it to describe the 64x36 frame", lb)
+	}
+
+	// The same frame through a fresh scratch gives the same tensor: a scratch carries nothing
+	// from one frame to the next that changes the answer.
+	other := &letterboxScratch{tensor: make([]float32, len(scratch.tensor))}
+	other.scaler = mustScaler(t, 640)
+	if _, err := other.scaler.Letterbox(frame, other.tensor); err != nil {
+		t.Fatal(err)
+	}
+	for i := range scratch.tensor {
+		if scratch.tensor[i] != other.tensor[i] {
+			t.Fatalf("tensor differs at %d: %v vs %v", i, scratch.tensor[i], other.tensor[i])
+		}
+	}
+
+	// A scratch that served a different geometry is reused for this one without a trace of it.
+	big := engine.Frame{Width: 100, Height: 100, Pix: make([]byte, 100*100*3)}
+	if _, err := scratch.scaler.Letterbox(big, scratch.tensor); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scratch.scaler.Letterbox(frame, scratch.tensor); err != nil {
+		t.Fatal(err)
+	}
+	for i := range scratch.tensor {
+		if scratch.tensor[i] != other.tensor[i] {
+			t.Fatalf("a reused scratch differs at %d", i)
+		}
+	}
+
+	// And the pool hands the same one back.
+	e.scratch.Put(scratch)
+	if _, err := e.getScratch(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustScaler(t *testing.T, size int) *imaging.Scaler {
+	t.Helper()
+	s, err := imaging.NewScaler(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
