@@ -8,6 +8,22 @@ the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A published module version is immutable: Go serves it from the proxy forever, so
 a release is corrected by another release and never by moving a tag.
 
+## [0.6.2] - 2026-10-29
+
+### Added
+
+- `streaming.Config.GPUFilters` and `source.Config.GPUFilters`: with the cuvid decoder, 8-bit 4:2:0
+  H.264 or HEVC, and a frame cap or a height limit that changes the picture, the picture stays in
+  GPU memory (`-hwaccel cuda -hwaccel_output_format cuda -c:v h264_cuvid`), the cap (`select`) and
+  the limit (`scale_cuda`, bilinear, nv12) run there, and `hwdownload,format=nv12` copies only the
+  chosen frames, already at their final size; `-pix_fmt bgr24` still converts on the CPU, because
+  `scale_cuda` has no bgr output. The pipe, `Stream.Properties()` and every `Frame` are unchanged.
+  The live-view tap (`-c:v copy`, fragmented MP4) keeps working beside it: checked on ffmpeg
+  6.1.1, 250 of 250 frames copied. Any camera outside that case (10-bit, 4:2:2, MJPEG, a probe
+  without a pixel format, software decode) is read as in v0.6.1. False (the zero value) reads as
+  in v0.6.1 for every camera. Needs ffmpeg 6.1 or newer.
+- `streaming.Properties.PixFmt`, from ffprobe's `pix_fmt`.
+
 ## [0.6.1] - 2026-10-29
 
 Less CPU per camera and per node, measured on a 32-vCPU node reading 23 cameras: ffmpeg took

@@ -99,6 +99,8 @@ type Properties struct {
 	Height int
 	FPS    float64
 	Codec  string
+	// PixFmt is ffprobe's pixel format of the picture ("yuv420p"), empty when the probe gave none.
+	PixFmt string
 }
 
 // buffersPerStream is the size of every stream's ring, and three is the smallest number that
@@ -263,6 +265,19 @@ type Config struct {
 	// fleet into the one holding all of it.
 	HWDevice int
 
+	// GPUFilters keeps the decoded picture in GPU memory and runs the frame cap and the height
+	// limit there (select, scale_cuda), downloading only the frames that were chosen, already at
+	// their final size. It applies to the cuvid decoder, for 8-bit 4:2:0 H.264 and HEVC, when
+	// there is a cap or a limit that would change the picture; every other camera is read as
+	// without it. False reads as before: the decoder hands every frame back at the camera's own
+	// size, or scaled by NVDEC when MaxHeight is set.
+	//
+	// What it saves is the copy to system memory of every frame the cap drops and the copy of
+	// the kept ones at the camera's size; what it does not save is the nv12 to bgr24 conversion
+	// of the frames that are kept, which scale_cuda cannot produce and stays on the CPU. Needs
+	// ffmpeg 6.1 or newer (scale_cuda with interp_algo and format).
+	GPUFilters bool
+
 	// MaxFPS drops frames inside ffmpeg, after the decoder and before the bgr24 conversion and
 	// the pipe. Zero passes every frame.
 	//
@@ -321,17 +336,37 @@ func tapArgs() []string {
 // tapFragment is the longest a fragment of the tap may be.
 const tapFragment = 100 * time.Millisecond
 
+// selectFilter is the frame cap: it drops, it never repeats.
+func (c Config) selectFilter() string {
+	gap := strconv.FormatFloat(0.9/c.MaxFPS, 'f', 4, 64)
+	// 0.9 of the interval and not the whole of it: a source whose frames are exactly 1/MaxFPS
+	// apart would otherwise lose every second one to rounding in the timestamps. A picture
+	// without a timestamp passes -- an unknown time is not a reason to drop.
+	return "select='isnan(prev_selected_t)+isnan(t)+gte(t-prev_selected_t," + gap + ")'"
+}
+
+// cappedSize returns the size a srcW x srcH picture is scaled to by MaxHeight, and false when it
+// is left alone: no limit, or a picture no taller than it, which is never scaled up. Both sides
+// are even, because the pixel formats a camera sends are subsampled in pairs.
+func (c Config) cappedSize(srcW, srcH int) (w, h int, ok bool) {
+	if c.MaxHeight <= 0 || srcH <= c.MaxHeight || srcW <= 0 {
+		return 0, 0, false
+	}
+	h = c.MaxHeight &^ 1
+	w = (srcW*h/srcH + 1) &^ 1
+	if w < 2 || h < 2 || h >= srcH {
+		return 0, 0, false
+	}
+	return w, h, true
+}
+
 // filterArgs returns the output filters for a source of srcW x srcH, and the size of what they
 // produce. With neither a cap nor a limit it returns no arguments and the source's own size.
 func (c Config) filterArgs(srcW, srcH int) (args []string, outW, outH int) {
 	outW, outH = srcW, srcH
 	var chain []string
 	if c.MaxFPS > 0 {
-		gap := strconv.FormatFloat(0.9/c.MaxFPS, 'f', 4, 64)
-		// 0.9 of the interval and not the whole of it: a source whose frames are exactly 1/MaxFPS
-		// apart would otherwise lose every second one to rounding in the timestamps. A picture
-		// without a timestamp passes -- an unknown time is not a reason to drop.
-		chain = append(chain, "select='isnan(prev_selected_t)+isnan(t)+gte(t-prev_selected_t,"+gap+")'")
+		chain = append(chain, c.selectFilter())
 	}
 	if c.MaxHeight > 0 && srcH > c.MaxHeight && srcW > 0 {
 		outH = c.MaxHeight
@@ -345,6 +380,55 @@ func (c Config) filterArgs(srcW, srcH int) (args []string, outW, outH int) {
 	if len(chain) == 0 {
 		return nil, outW, outH
 	}
+	return []string{"-vf", strings.Join(chain, ",")}, outW, outH
+}
+
+// gpuPath reports whether this camera is read with the picture kept on the GPU.
+//
+// Only for what was measured to work: the cuvid decoder, H.264 or HEVC, 8-bit 4:2:0 (the sample
+// format NVDEC hands back as nv12). A 10-bit or 4:2:2 camera, an MJPEG one, a probe that did not
+// report the format, and a configuration with nothing to do on the GPU (no cap and no limit that
+// changes the picture) all take the other path, where the same camera is known to open.
+func (c Config) gpuPath(props Properties) bool {
+	if !c.GPUFilters || c.HWAccel != "cuvid" {
+		return false
+	}
+	switch props.Codec {
+	case "h264", "hevc", "h265":
+	default:
+		return false
+	}
+	switch props.PixFmt {
+	case "yuv420p", "yuvj420p":
+	default:
+		return false
+	}
+	_, _, scaled := c.cappedSize(props.Width, props.Height)
+	return c.MaxFPS > 0 || scaled
+}
+
+// gpuFilterArgs returns the filters of the GPU path, and the size of what they produce.
+//
+// The cap runs first, on the GPU, so a dropped frame is never copied; then scale_cuda, only when
+// the picture is taller than the limit; then the one download, in nv12, which the output's
+// -pix_fmt bgr24 converts on the CPU at the final size (scale_cuda has no bgr output).
+//
+// interp_algo=2 is bilinear. Against the CPU area filter on a 2560x1440 test picture it came
+// closest of the five algorithms scale_cuda has (PSNR 38.8 dB against 37.0 for its default,
+// bicubic, and 30.1 for nearest), and it is the same filter NVDEC's -resize uses. The option and
+// format=nv12 need ffmpeg 6.1 or newer; an older ffmpeg refuses the filter and the camera does
+// not open, which is what GPUFilters=false is for.
+func (c Config) gpuFilterArgs(srcW, srcH int) (args []string, outW, outH int) {
+	outW, outH = srcW, srcH
+	var chain []string
+	if c.MaxFPS > 0 {
+		chain = append(chain, c.selectFilter())
+	}
+	if w, h, ok := c.cappedSize(srcW, srcH); ok {
+		outW, outH = w, h
+		chain = append(chain, "scale_cuda=w="+strconv.Itoa(w)+":h="+strconv.Itoa(h)+":interp_algo=2:format=nv12")
+	}
+	chain = append(chain, "hwdownload", "format=nv12")
 	return []string{"-vf", strings.Join(chain, ",")}, outW, outH
 }
 
@@ -410,6 +494,15 @@ func (c Config) hwaccelArgs(props Properties) []string {
 		if dec == "" {
 			return nil // a codec NVDEC does not decode: software, for this camera only
 		}
+		if c.gpuPath(props) {
+			// The frames stay in GPU memory for select and scale_cuda. The decoder is still named,
+			// and runs on the device the hwaccel context was created on.
+			args := []string{"-hwaccel", "cuda"}
+			if c.HWDevice >= 0 {
+				args = append(args, "-hwaccel_device", strconv.Itoa(c.HWDevice))
+			}
+			return append(args, "-hwaccel_output_format", "cuda", "-c:v", dec)
+		}
 		args := []string{"-c:v", dec}
 		if c.HWDevice >= 0 {
 			args = append(args, "-gpu", strconv.Itoa(c.HWDevice))
@@ -437,15 +530,7 @@ func (c Config) decoderResize(props Properties) (w, h int, ok bool) {
 	if c.HWAccel != "cuvid" || cuvidDecoder(props.Codec) == "" {
 		return 0, 0, false
 	}
-	if c.MaxHeight <= 0 || props.Height <= c.MaxHeight || props.Width <= 0 {
-		return 0, 0, false
-	}
-	h = c.MaxHeight &^ 1
-	w = (props.Width*h/props.Height + 1) &^ 1
-	if w < 2 || h < 2 || h >= props.Height {
-		return 0, 0, false
-	}
-	return w, h, true
+	return c.cappedSize(props.Width, props.Height)
 }
 
 // cuvidDecoder maps a probed codec to its NVDEC decoder, and returns "" for anything NVDEC does
@@ -555,7 +640,7 @@ func (o *Opener) Probe(ctx context.Context, cfg Config) (Properties, error) {
 
 	args := append(append(guarded, transportArgs(url)...),
 		"-select_streams", "v:0",
-		"-show_entries", "stream=width,height,r_frame_rate,codec_name",
+		"-show_entries", "stream=width,height,r_frame_rate,codec_name,pix_fmt",
 		"-of", "json",
 		url,
 	)
@@ -571,6 +656,7 @@ func (o *Opener) Probe(ctx context.Context, cfg Config) (Properties, error) {
 			Height    int    `json:"height"`
 			FrameRate string `json:"r_frame_rate"`
 			Codec     string `json:"codec_name"`
+			PixFmt    string `json:"pix_fmt"`
 		} `json:"streams"`
 	}
 	if err := json.Unmarshal(out, &parsed); err != nil {
@@ -583,7 +669,7 @@ func (o *Opener) Probe(ctx context.Context, cfg Config) (Properties, error) {
 	if s.Width <= 0 || s.Height <= 0 {
 		return Properties{}, fmt.Errorf("streaming: probe gave no geometry (%dx%d)", s.Width, s.Height)
 	}
-	return Properties{Width: s.Width, Height: s.Height, FPS: parseRational(s.FrameRate), Codec: s.Codec}, nil
+	return Properties{Width: s.Width, Height: s.Height, FPS: parseRational(s.FrameRate), Codec: s.Codec, PixFmt: s.PixFmt}, nil
 }
 
 // parseRational reads ffprobe's `num/den` frame rate.
@@ -690,11 +776,17 @@ func (o *Opener) Open(ctx context.Context, cfg Config) (*Stream, error) {
 	// When the decoder scales (cuvid with a MaxHeight), the picture reaches the filter chain
 	// already at its final size, so the chain sees that size and adds no scale of its own.
 	source := props
-	chainW, chainH := source.Width, source.Height
-	if w, h, ok := cfg.decoderResize(source); ok {
-		chainW, chainH = w, h
+	var filter []string
+	var outW, outH int
+	if cfg.gpuPath(source) {
+		filter, outW, outH = cfg.gpuFilterArgs(source.Width, source.Height)
+	} else {
+		chainW, chainH := source.Width, source.Height
+		if w, h, ok := cfg.decoderResize(source); ok {
+			chainW, chainH = w, h
+		}
+		filter, outW, outH = cfg.filterArgs(chainW, chainH)
 	}
-	filter, outW, outH := cfg.filterArgs(chainW, chainH)
 	props.Width, props.Height = outW, outH
 
 	runCtx, cancel := context.WithCancel(ctx)

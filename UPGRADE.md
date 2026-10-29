@@ -1,5 +1,13 @@
 # Upgrade Guide
 
+## v0.6.2
+
+Nothing breaks. `source.Config.GPUFilters` is false by default and every camera is read as in v0.6.1.
+An application that decodes with cuvid sets it from its own switch (alpr: `ALPR_GPU_FILTERS`, true
+by default) to keep the picture on the GPU for the cap and the limit; the switch off is the
+rollback, with no rebuild. It needs the ffmpeg of the engine image (6.1.1); an older ffmpeg refuses
+`scale_cuda` with `interp_algo` and the camera does not open.
+
 ## v0.6.1
 
 Nothing breaks and nothing has to be written. Set `MaxHeight` (1080 for cameras that send 1440 or

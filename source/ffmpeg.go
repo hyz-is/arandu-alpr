@@ -58,6 +58,10 @@ type Config struct {
 	// NVDEC block is separate silicon from the SMs, so the decode competes with nothing.
 	HWAccel string
 
+	// GPUFilters keeps the picture on the GPU for the frame cap and the height limit (cuvid, 8-bit
+	// H.264 and HEVC; see streaming.Config.GPUFilters). False reads as before.
+	GPUFilters bool
+
 	// MaxFPS caps the frames ffmpeg converts and pipes, after the decoder, by dropping: it never
 	// repeats a frame to reach the rate, so a camera slower than the cap is read as it is. Zero
 	// passes every one.
@@ -106,6 +110,7 @@ func (d *FFmpegDialer) Dial(ctx context.Context, spec contract.CameraSpec) (*Str
 		ReadTimeout:          d.cfg.ReadTimeout,
 		DebugBufferOwnership: d.cfg.DebugBufferOwnership,
 		HWAccel:              d.cfg.HWAccel,
+		GPUFilters:           d.cfg.GPUFilters,
 		MaxFPS:               d.cfg.MaxFPS,
 		MaxHeight:            d.cfg.MaxHeight,
 		// Decode on the card that will run this camera's inference.

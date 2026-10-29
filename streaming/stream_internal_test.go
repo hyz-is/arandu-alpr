@@ -1012,7 +1012,7 @@ func ffmpegArgsRunner(t *testing.T, probeW, probeH int, codec string, frameW, fr
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	probe := fmt.Sprintf(`{"streams":[{"width":%d,"height":%d,"r_frame_rate":"25/1","codec_name":%q}]}`, probeW, probeH, codec)
+	probe := fmt.Sprintf(`{"streams":[{"width":%d,"height":%d,"r_frame_rate":"25/1","codec_name":%q,"pix_fmt":"yuv420p"}]}`, probeW, probeH, codec)
 	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		if strings.Contains(name, "ffprobe") {
 			return exec.CommandContext(ctx, "sh", "-c", "printf %s "+strconv.Quote(probe))
@@ -1099,5 +1099,123 @@ func TestOpenWithCuvidAndNoLimitKeepsTheCameraSize(t *testing.T) {
 	}
 	if props.Width != 1280 || props.Height != 720 {
 		t.Errorf("properties = %dx%d, want 1280x720", props.Width, props.Height)
+	}
+}
+
+const gpuSelect = "select='isnan(prev_selected_t)+isnan(t)+gte(t-prev_selected_t,0.0900)'"
+
+func TestGPUPathKeepsTheFrameOnTheGPUUntilItIsSelectedAndScaled(t *testing.T) {
+	cfg := Config{HWAccel: "cuvid", HWDevice: 0, MaxFPS: 10, MaxHeight: 1080, GPUFilters: true}
+	argv, props := openForArgs(t, cfg, 2560, 1440, "h264", 1920, 1080)
+	want := "-loglevel error -hwaccel cuda -hwaccel_device 0 -hwaccel_output_format cuda -c:v h264_cuvid " +
+		"-rtsp_transport tcp -i rtsp://cam/live -an -filter_threads 1 " +
+		"-vf " + gpuSelect + ",scale_cuda=w=1920:h=1080:interp_algo=2:format=nv12,hwdownload,format=nv12 " +
+		"-vsync passthrough -f rawvideo -pix_fmt bgr24 pipe:1"
+	if got := strings.Join(argv, " "); got != want {
+		t.Errorf("ffmpeg args\n got: %s\nwant: %s", got, want)
+	}
+	if props.Width != 1920 || props.Height != 1080 {
+		t.Errorf("properties = %dx%d, want 1920x1080", props.Width, props.Height)
+	}
+}
+
+func TestGPUPathSelectsBeforeItScales(t *testing.T) {
+	cfg := Config{MaxFPS: 10, MaxHeight: 1080}
+	args, w, h := cfg.gpuFilterArgs(2560, 1440)
+	got := strings.Join(args, " ")
+	sel, scale, down := strings.Index(got, "select="), strings.Index(got, "scale_cuda="), strings.Index(got, "hwdownload")
+	if !(0 <= sel && sel < scale && scale < down) {
+		t.Errorf("want select, then scale_cuda, then hwdownload: %q", got)
+	}
+	if w != 1920 || h != 1080 {
+		t.Errorf("size = %dx%d, want 1920x1080", w, h)
+	}
+}
+
+func TestGPUPathWithOnlyACapDoesNotScale(t *testing.T) {
+	argv, props := openForArgs(t, Config{HWAccel: "cuvid", HWDevice: 1, MaxFPS: 10, GPUFilters: true}, 1920, 1080, "hevc", 1920, 1080)
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "-hwaccel_device 1 -hwaccel_output_format cuda -c:v hevc_cuvid") {
+		t.Errorf("no GPU decode: %s", joined)
+	}
+	if strings.Contains(joined, "scale_cuda") || !strings.Contains(joined, "hwdownload,format=nv12") {
+		t.Errorf("want select and download only: %s", joined)
+	}
+	if props.Width != 1920 || props.Height != 1080 {
+		t.Errorf("properties = %dx%d", props.Width, props.Height)
+	}
+}
+
+func TestGPUPathWithOnlyALimitDoesNotSelect(t *testing.T) {
+	argv, _ := openForArgs(t, Config{HWAccel: "cuvid", HWDevice: -1, MaxHeight: 1080, GPUFilters: true}, 2560, 1440, "h264", 1920, 1080)
+	joined := strings.Join(argv, " ")
+	if strings.Contains(joined, "select=") || strings.Contains(joined, "hwaccel_device") {
+		t.Errorf("unexpected select or device: %s", joined)
+	}
+	if !strings.Contains(joined, "-vf scale_cuda=w=1920:h=1080:interp_algo=2:format=nv12,hwdownload,format=nv12") {
+		t.Errorf("want scale_cuda then the download: %s", joined)
+	}
+}
+
+func TestGPUPathIsOffWhenTheSwitchIsOff(t *testing.T) {
+	cfg := Config{HWAccel: "cuvid", HWDevice: 0, MaxFPS: 10, MaxHeight: 1080}
+	argv, _ := openForArgs(t, cfg, 2560, 1440, "h264", 1920, 1080)
+	joined := strings.Join(argv, " ")
+	for _, bad := range []string{"-hwaccel ", "scale_cuda", "hwdownload"} {
+		if strings.Contains(joined, bad) {
+			t.Errorf("GPUFilters is off but %q is in %s", bad, joined)
+		}
+	}
+	if !strings.Contains(joined, "-c:v h264_cuvid -gpu 0 -resize 1920x1080") {
+		t.Errorf("want the decoder-side resize of the plain path: %s", joined)
+	}
+}
+
+func TestGPUPathOnlyForWhatWasMeasured(t *testing.T) {
+	base := Config{HWAccel: "cuvid", HWDevice: 0, MaxFPS: 10, MaxHeight: 1080, GPUFilters: true}
+	ok := Properties{Width: 2560, Height: 1440, Codec: "h264", PixFmt: "yuv420p"}
+	if !base.gpuPath(ok) {
+		t.Fatal("the measured case is not on the GPU path")
+	}
+	if p := ok; true {
+		p.PixFmt = "yuvj420p"
+		if !base.gpuPath(p) {
+			t.Error("yuvj420p is 8-bit 4:2:0 and belongs on the GPU path")
+		}
+	}
+	for name, mutate := range map[string]func(*Config, *Properties){
+		"software decode": func(c *Config, _ *Properties) { c.HWAccel = "" },
+		"switch off":      func(c *Config, _ *Properties) { c.GPUFilters = false },
+		"10-bit":          func(_ *Config, p *Properties) { p.PixFmt = "yuv420p10le" },
+		"4:2:2":           func(_ *Config, p *Properties) { p.PixFmt = "yuv422p" },
+		"unknown format":  func(_ *Config, p *Properties) { p.PixFmt = "" },
+		"mjpeg":           func(_ *Config, p *Properties) { p.Codec = "mjpeg" },
+		"nothing to do":   func(c *Config, _ *Properties) { c.MaxFPS, c.MaxHeight = 0, 0 },
+		"smaller, no cap": func(c *Config, p *Properties) { c.MaxFPS = 0; p.Width, p.Height = 1280, 720 },
+	} {
+		c, p := base, ok
+		mutate(&c, &p)
+		if c.gpuPath(p) {
+			t.Errorf("%s: on the GPU path, want the plain one", name)
+		}
+	}
+}
+
+func TestProbeAsksForThePixelFormat(t *testing.T) {
+	var asked []string
+	o := NewOpener(1, func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		asked = args
+		return exec.CommandContext(ctx, "sh", "-c", `printf %s '{"streams":[{"width":2560,"height":1440,"r_frame_rate":"25/1","codec_name":"hevc","pix_fmt":"yuv420p10le"}]}'`)
+	})
+	o.SetGuard(Guard{AllowPrivate: true})
+	props, err := o.Probe(context.Background(), Config{URL: "rtsp://cam/live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if props.PixFmt != "yuv420p10le" {
+		t.Errorf("PixFmt = %q", props.PixFmt)
+	}
+	if !strings.Contains(strings.Join(asked, " "), "pix_fmt") {
+		t.Errorf("ffprobe was not asked for pix_fmt: %v", asked)
 	}
 }
