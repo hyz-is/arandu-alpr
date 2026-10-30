@@ -64,7 +64,8 @@ type Focus interface {
 }
 
 // Encoder produces the JPEGs a Detection may carry, and is optional. *imaging.Encoder implements
-// it.
+// it. It is called from the camera's goroutine and from the camera's encoder goroutine, and by
+// other cameras: it must be safe for concurrent use.
 //
 // The bytes it returns are owned by the caller and are never rewritten, which is what lets one
 // encode serve both the sink and the live preview.
@@ -246,6 +247,14 @@ type Camera struct {
 	spare     [][]byte
 	// raw is how many of kept still hold a raw frame, so keep need not count them.
 	raw int
+	// jobs is the queue of the camera's encoder goroutine (images.go), nil when the camera keeps no
+	// pictures. flight is the jobs sent and not yet taken back, parked the verdicts waiting for
+	// them; all three are touched by the camera's goroutine alone, and encoding says whether the
+	// encoder goroutine is running.
+	jobs     chan *encodeJob
+	flight   []*encodeJob
+	parked   []parkedVerdict
+	encoding bool
 
 	staleRun     int
 	lastDetectAt time.Time
@@ -360,6 +369,9 @@ func New(cfg Config) (*Camera, error) {
 	if cfg.Consensus != nil {
 		c.consensus = alpr.NewConsensus(*cfg.Consensus)
 		c.kept = map[uint64]*keptFrame{}
+		if c.needsPixels() {
+			c.jobs = make(chan *encodeJob, maxEncodeQueue)
+		}
 	}
 	return c, nil
 }
@@ -390,6 +402,9 @@ var (
 // and the one that comes back is picked up within that.
 func (c *Camera) Run(ctx context.Context) error {
 	c.lastDetectionAt = c.now()
+
+	// The encoder goroutine lives as long as the camera does and is waited for on the way out.
+	defer c.startEncoder(ctx)()
 
 	// One ticker for the camera's whole life, not one per connection. A flapping camera
 	// reconnecting every ten seconds would otherwise reset a sixty-second ticker forever and
@@ -494,6 +509,7 @@ func (c *Camera) serve(ctx context.Context, s Stream, maintenance <-chan time.Ti
 
 // maintain is the periodic work: everything that is about elapsed time rather than about a frame.
 func (c *Camera) maintain(ctx context.Context) {
+	c.collect(ctx)
 	if c.cfg.NoDetectionAfter <= 0 || c.noDetectionSent {
 		return
 	}

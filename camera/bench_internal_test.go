@@ -64,6 +64,8 @@ func BenchmarkStepConsensus(b *testing.B) {
 				pix[i] = byte(i)
 			}
 			ctx := context.Background()
+			stop := r.cam.startEncoder(ctx)
+			defer stop()
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {

@@ -1,5 +1,14 @@
 # Upgrade Guide
 
+## v0.6.5
+
+Nothing breaks and nothing has to be written. A camera with `Consensus` and an `Encoder` now has an
+encoder goroutine, started by `Run` and ended with its context. `camera.Encoder` must be safe for
+concurrent use, as `imaging.Encoder` is; an application with an `Encoder` of its own checks that. A
+crowd can hold up to three more raw frames (about 33 MB at 1440p) while the encoder works, and a
+verdict is delivered with the first frame after its pictures are ready instead of in the frame
+that decided it.
+
 ## v0.6.4
 
 Nothing breaks and nothing has to be written. A camera with `Consensus` and an `Encoder` holds the

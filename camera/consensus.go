@@ -18,16 +18,16 @@ import (
 // improvement.
 //
 // A track can wait longer than the camera can afford to hold its raw frame (see maxKeptFrames).
-// Then the frame is encoded into jpeg and pix is let go: the Sink gets the same pictures a raw
-// frame would have produced, from a few hundred KB instead of 11 MB. box is the best reading's
-// box, which is what the crop is cut from, and it is kept beside the frame because the crop of
-// an evicted frame is encoded before the verdict says anything.
+// Then the frame goes to the camera's encoder goroutine (images.go) as it is, with no copy, and
+// the track keeps the job: the Sink gets the same pictures a raw frame would have produced, from a
+// few hundred KB instead of 11 MB. box is the best reading's box, which is what the crop is cut
+// from, and it is kept beside the frame because the job is made before the verdict says anything.
 type keptFrame struct {
 	pix  []byte
 	w, h int
 	at   time.Time
 	box  contract.BBox
-	jpeg encodedImages
+	job  *encodeJob
 }
 
 // encodedImages are the pictures of a frame that was encoded ahead of its verdict. A nil field is
@@ -35,9 +35,6 @@ type keptFrame struct {
 type encodedImages struct {
 	full, crop []byte
 }
-
-// size is what the encoded pictures cost to hold.
-func (e encodedImages) size() int { return len(e.full) + len(e.crop) }
 
 // observe hands one reading to the consensus and acts on what it says.
 func (c *Camera) observe(
@@ -79,6 +76,7 @@ func (c *Camera) flushConsensus(ctx context.Context, now time.Time) {
 	if c.consensus == nil {
 		return
 	}
+	c.collect(ctx)
 	verdicts, closed := c.consensus.Flush(now)
 	for _, v := range verdicts {
 		c.emitVerdict(ctx, v, now)
@@ -114,13 +112,18 @@ func (c *Camera) emitVerdict(ctx context.Context, v alpr.Verdict, now time.Time)
 	}
 	frame := engine.Frame{CapturedAt: v.Best.CapturedAt}
 	var pre encodedImages
+	var waiting *encodeJob
 	if k := c.kept[v.Track]; k != nil {
 		frame = engine.Frame{Pix: k.pix, Width: k.w, Height: k.h, CapturedAt: k.at}
-		if len(k.pix) == 0 {
-			// Encoded ahead of the verdict from the box it was kept with: the box that goes to
-			// the Sink is the one of the picture.
-			pre = k.jpeg
+		if j := k.job; j != nil && len(k.pix) == 0 {
+			// The frame went to the encoder ahead of the verdict, with the box it was kept with: the
+			// box that goes to the Sink is the one of the picture.
 			cand.Box = k.box
+			if j.finished() {
+				pre = c.imagesOf(j)
+			} else {
+				waiting = j
+			}
 		}
 	} else if c.needsPixels() {
 		// Nothing was ever kept for this track: the reading goes out without pictures, and this
@@ -133,6 +136,13 @@ func (c *Camera) emitVerdict(ctx context.Context, v alpr.Verdict, now time.Time)
 	c.lastDetectionAt = now
 	c.noDetectionSent = false
 	c.remember(cand.Box, now)
+	if waiting != nil {
+		// The encoder has not finished this track's pictures. The camera does not wait for it:
+		// the delivery is parked and made on this goroutine, with the next frame, once they are
+		// ready (collect).
+		c.parked = append(c.parked, parkedVerdict{job: waiting, frame: frame, cand: cand, reading: reading, confidence: v.Confidence, at: now})
+		return
+	}
 	if !frame.CapturedAt.IsZero() {
 		c.m.pipelineDuration.Observe(c.now().Sub(frame.CapturedAt).Seconds())
 	}
@@ -153,9 +163,9 @@ func (c *Camera) keep(track uint64, f engine.Frame, box contract.BBox) {
 	}
 	k := c.kept[track]
 	if k == nil || len(k.pix) == 0 {
-		// A new track, or one whose frame was encoded and let go. The first makes room for itself by
-		// encoding the oldest raw frame, once; the second takes a raw frame back only when one is
-		// free, so a crowd cannot make a frame encode more than once.
+		// A new track, or one whose frame went to the encoder. The first makes room for itself by
+		// handing the oldest raw frame to the encoder; the second takes a raw frame back only when
+		// one is free, so a crowd cannot make a frame encode more than once.
 		if c.raw >= maxKeptFrames {
 			if k != nil {
 				return
@@ -166,7 +176,7 @@ func (c *Camera) keep(track uint64, f engine.Frame, box contract.BBox) {
 			k = &keptFrame{}
 			c.kept[track] = k
 		}
-		k.jpeg = encodedImages{}
+		k.job = nil
 		c.raw++
 	}
 	n := len(f.Pix)
@@ -193,90 +203,22 @@ func (c *Camera) giveBack(k *keptFrame) {
 	if len(k.pix) > 0 {
 		c.raw--
 	}
-	if len(c.spare) < maxSpareFrames && cap(k.pix) > 0 {
-		c.spare = append(c.spare, k.pix[:0])
-	}
+	c.recycle(k.pix)
 	k.pix = nil
+}
+
+// recycle keeps a buffer for the next track, up to maxSpareFrames.
+func (c *Camera) recycle(pix []byte) {
+	if len(c.spare) < maxSpareFrames && cap(pix) > 0 {
+		c.spare = append(c.spare, pix[:0])
+	}
 }
 
 // maxKeptFrames bounds the raw pictures a camera holds for tracks that have not decided: one frame
 // is 11 MB at 1440p, and a car park can show a dozen plates at once. A track that would exceed it
-// does not lose its picture: the oldest raw frame is encoded to jpeg and let go (encodeOldestKept),
-// and the verdict is delivered with those pictures.
+// does not lose its picture: the oldest raw frame goes to the encoder goroutine (encodeOldestKept)
+// and the verdict is delivered with the JPEGs it makes.
 const maxKeptFrames = 4
-
-// The encoded pictures of the tracks past maxKeptFrames. A full frame and a crop are a few hundred
-// KB, so these hold the whole of a consensus (16 tracks) in the memory of about one raw frame; a track that still does
-// not fit loses its pictures, oldest first, and that is counted when its verdict goes out without.
-const (
-	maxEncodedFrames = 16
-	maxEncodedBytes  = 16 << 20
-)
-
-// encodeOldestKept encodes the raw frame of the track whose best frame is the oldest, exactly as
-// deliver would have, and gives the raw buffer back. The pictures stay with the track until it
-// decides; a frame that cannot be encoded is dropped, and its verdict goes without pictures.
-func (c *Camera) encodeOldestKept() {
-	var oldest uint64
-	var at time.Time
-	for id, k := range c.kept {
-		if len(k.pix) > 0 && (oldest == 0 || k.at.Before(at)) {
-			oldest, at = id, k.at
-		}
-	}
-	if oldest == 0 {
-		return
-	}
-	k := c.kept[oldest]
-	f := engine.Frame{Pix: k.pix, Width: k.w, Height: k.h, CapturedAt: k.at}
-	var out encodedImages
-	if c.cfg.IncludeFullImage || c.cfg.Preview != nil {
-		b, err := c.cfg.Encoder.EncodeFrame(f)
-		if err != nil {
-			c.cfg.Logger.Warn("encoding the frame failed", LabelCamera, c.cfg.Spec.ID, "error", err)
-			c.drop(oldest)
-			return
-		}
-		out.full = b
-	}
-	if c.cfg.IncludeCropImage {
-		b, err := c.cfg.Encoder.EncodeCrop(f, k.box)
-		if err != nil {
-			c.cfg.Logger.Warn("encoding the crop failed", LabelCamera, c.cfg.Spec.ID, "error", err)
-			c.drop(oldest)
-			return
-		}
-		out.crop = b
-	}
-	k.jpeg = out
-	c.giveBack(k)
-	c.trimEncoded()
-}
-
-// trimEncoded lets go of the oldest encoded pictures while they are more than the bounds allow.
-func (c *Camera) trimEncoded() {
-	for {
-		n, bytes := 0, 0
-		var oldest uint64
-		var at time.Time
-		for id, k := range c.kept {
-			if len(k.pix) > 0 {
-				continue
-			}
-			n++
-			bytes += k.jpeg.size()
-			if oldest == 0 || k.at.Before(at) {
-				oldest, at = id, k.at
-			}
-		}
-		if n <= maxEncodedFrames && bytes <= maxEncodedBytes {
-			return
-		}
-		c.cfg.Logger.Warn("dropping the pictures of an undecided track", LabelCamera, c.cfg.Spec.ID,
-			"track", oldest, "encoded_tracks", n, "encoded_bytes", bytes)
-		c.drop(oldest)
-	}
-}
 
 // maxSpareFrames is how many buffers a camera keeps for the next track: enough for the vehicles
 // a lane shows at once, few enough that a quiet camera does not sit on a gigabyte.

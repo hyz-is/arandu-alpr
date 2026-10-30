@@ -305,7 +305,7 @@ func TestConsensusWorksWithAnEngineThatKeptOnlyTheText(t *testing.T) {
 
 func TestAnyNumberOfPlatesHoldsAtMostAFewRawPictures(t *testing.T) {
 	// A car park shows a dozen plates at once, and each of them is a frame of 11 MB at 1440p. The
-	// raw ones are bounded; the others wait as the JPEGs the verdict will carry.
+	// raw ones are bounded, and so are the frames with the encoder.
 	cfg := alpr.DefaultConsensus()
 	enc, _ := imaging.NewEncoder(80)
 	r := newRig(t, func(c *Config) {
@@ -313,6 +313,7 @@ func TestAnyNumberOfPlatesHoldsAtMostAFewRawPictures(t *testing.T) {
 		c.Encoder = enc
 		c.IncludeCropImage = true
 	})
+	startEncoder(t, r)
 	pix := make([]byte, frameW*frameH*3)
 	for i := 0; i < 12; i++ {
 		f := engine.Frame{Pix: pix, Width: frameW, Height: frameH, CapturedAt: r.clock.Now()}
@@ -322,7 +323,7 @@ func TestAnyNumberOfPlatesHoldsAtMostAFewRawPictures(t *testing.T) {
 	if got := r.cam.raw; got > maxKeptFrames {
 		t.Errorf("%d raw pictures held for 12 undecided plates, the bound is %d", got, maxKeptFrames)
 	}
-	if got := len(r.cam.kept); got != 12 {
-		t.Errorf("%d plates hold pictures, want all 12", got)
+	if got := r.cam.raw + len(r.cam.flight); got > maxKeptFrames+maxInFlight {
+		t.Errorf("%d raw pictures held or in flight, the bound is %d", got, maxKeptFrames+maxInFlight)
 	}
 }

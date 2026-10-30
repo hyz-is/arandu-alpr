@@ -8,6 +8,25 @@ the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A published module version is immutable: Go serves it from the proxy forever, so
 a release is corrected by another release and never by moving a tag.
 
+## [0.6.5] - 2026-10-30
+
+### Changed
+
+- The pictures of a track whose raw frame is let go (v0.6.4) are no longer encoded on the frame
+  loop. The raw frame is handed as it is, with no copy, to one encoder goroutine per camera (started
+  by `Run`, ended and waited for with its context) through a queue of two; the loop never waits for
+  it. v0.6.4 encoded that frame in the middle of a frame, which cost a camera in a crowd about 3 ms
+  a frame. A verdict whose pictures are not ready is parked and delivered on the camera's own
+  goroutine with the first frame after they are, so `Sink.Detect`, `Preview` and the detection
+  budget are still touched by that goroutine alone. `Encoder` must now be safe for concurrent use;
+  `imaging.Encoder` already was.
+- The raw frames in transit count against a ceiling of their own: at most three (two queued, one
+  being encoded) on top of `maxKeptFrames`, and their buffers go back to the spares once encoded,
+  so the queue allocates no buffer. Past it the oldest track loses its pictures, as it did before
+  v0.6.4, but now with a warning in the log and a count in
+  `alpr_inference_errors_total{stage="images"}`. A camera whose tracks fit in four frames runs the
+  code it ran in v0.6.2.
+
 ## [0.6.4] - 2026-10-30
 
 ### Fixed
