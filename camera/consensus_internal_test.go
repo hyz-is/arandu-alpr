@@ -303,8 +303,9 @@ func TestConsensusWorksWithAnEngineThatKeptOnlyTheText(t *testing.T) {
 	}
 }
 
-func TestAnyNumberOfPlatesHoldsAtMostAFewPictures(t *testing.T) {
-	// A car park shows a dozen plates at once, and each of them is a frame of 11 MB at 1440p.
+func TestAnyNumberOfPlatesHoldsAtMostAFewRawPictures(t *testing.T) {
+	// A car park shows a dozen plates at once, and each of them is a frame of 11 MB at 1440p. The
+	// raw ones are bounded; the others wait as the JPEGs the verdict will carry.
 	cfg := alpr.DefaultConsensus()
 	enc, _ := imaging.NewEncoder(80)
 	r := newRig(t, func(c *Config) {
@@ -312,12 +313,16 @@ func TestAnyNumberOfPlatesHoldsAtMostAFewPictures(t *testing.T) {
 		c.Encoder = enc
 		c.IncludeCropImage = true
 	})
+	pix := make([]byte, frameW*frameH*3)
 	for i := 0; i < 12; i++ {
-		f := engine.Frame{Pix: make([]byte, 64), Width: frameW, Height: frameH, CapturedAt: r.clock.Now()}
-		r.cam.keep(uint64(i+1), f)
+		f := engine.Frame{Pix: pix, Width: frameW, Height: frameH, CapturedAt: r.clock.Now()}
+		r.cam.keep(uint64(i+1), f, contract.BBox{X: 800, Y: 400, Width: 300, Height: 90})
 		r.clock.Advance(time.Millisecond)
 	}
-	if len(r.cam.kept) > maxKeptFrames {
-		t.Errorf("%d pictures held for 12 undecided plates, the bound is %d", len(r.cam.kept), maxKeptFrames)
+	if got := r.cam.raw; got > maxKeptFrames {
+		t.Errorf("%d raw pictures held for 12 undecided plates, the bound is %d", got, maxKeptFrames)
+	}
+	if got := len(r.cam.kept); got != 12 {
+		t.Errorf("%d plates hold pictures, want all 12", got)
 	}
 }

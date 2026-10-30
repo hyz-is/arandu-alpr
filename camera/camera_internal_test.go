@@ -48,7 +48,7 @@ type testRig struct {
 }
 
 // newRig builds a camera wired to fakes, with the knobs a test usually wants already set.
-func newRig(t *testing.T, mutate func(*Config)) *testRig {
+func newRig(t testing.TB, mutate func(*Config)) *testRig {
 	t.Helper()
 
 	clock := newTestClock()

@@ -1,5 +1,17 @@
 # Upgrade Guide
 
+## v0.6.4
+
+Nothing breaks and nothing has to be written. A camera with `Consensus` and an `Encoder` holds the
+pictures of an undecided track as JPEGs once more than four are waiting, instead of losing them,
+so memory rises by a few hundred KB per waiting track (at most 16 tracks and 16 MiB per camera) and a verdict
+that has no picture left is counted under `alpr_inference_errors_total{stage="images"}`.
+
+## v0.6.3
+
+Nothing breaks. `streaming.Opener.MeasureRate` is new and nothing calls it unless the application
+does.
+
 ## v0.6.2
 
 Nothing breaks. `source.Config.GPUFilters` is false by default and every camera is read as in v0.6.1.

@@ -8,6 +8,23 @@ the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 A published module version is immutable: Go serves it from the proxy forever, so
 a release is corrected by another release and never by moving a tag.
 
+## [0.6.4] - 2026-10-30
+
+### Fixed
+
+- A plate decided by the consensus now always reaches the Sink with its pictures when the camera
+  was asked for them. With more than `maxKeptFrames` (4) tracks undecided at once, the raw frame of
+  the oldest was dropped and its verdict went out with no `FullJPEG` and no `CropJPEG`: 3.5% of the
+  reads of a production fleet, and 275 of 1461 in one hour on its busiest camera. The oldest raw
+  frame is now encoded as `deliver` would have encoded it (the full picture if `IncludeFullImage`
+  or `Preview` needs it, the crop of the best reading's box if `IncludeCropImage`) and the raw
+  buffer is given back, so at most four raw frames are held and the rest wait as JPEGs of a few
+  hundred KB; a frame is encoded once, when a new track needs its raw slot, and a camera whose
+  tracks fit in four frames never encodes anything. Those are bounded too (16 tracks, 16 MiB); past that the oldest track loses its
+  pictures, a warning is logged, and `alpr_inference_errors_total{stage="images"}` counts every
+  verdict that goes out without the pictures asked for. A camera that asks for no pictures is
+  unchanged.
+
 ## [0.6.3] - 2026-10-29
 
 ### Added

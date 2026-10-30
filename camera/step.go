@@ -254,7 +254,7 @@ func (c *Camera) recognize(ctx context.Context, f engine.Frame, cand engine.Cand
 	// made the reading useless, which is a graph that stays green through the outage.
 	c.m.pipelineDuration.Observe(c.now().Sub(f.CapturedAt).Seconds())
 
-	c.deliver(ctx, f, cand, reading, confidence, now)
+	c.deliver(ctx, f, cand, reading, confidence, now, encodedImages{})
 	return reading.Plate, confidence
 }
 
@@ -263,6 +263,9 @@ func (c *Camera) recognize(ctx context.Context, f engine.Frame, cand engine.Cand
 // The full frame is encoded at most once even when both the sink and the preview want it. Two
 // encodes of the same 6MB picture is the kind of waste that only shows up as "the GPU is fine but
 // the box is at 100% CPU".
+//
+// pre holds pictures that were encoded before the verdict, for a track whose raw frame had to be
+// let go; they are used as they are, and only what is missing is encoded from f.
 func (c *Camera) deliver(
 	ctx context.Context,
 	f engine.Frame,
@@ -270,13 +273,14 @@ func (c *Camera) deliver(
 	reading engine.Reading,
 	confidence float64,
 	now time.Time,
+	pre encodedImages,
 ) {
 	// A consensus verdict whose best frame was not kept (nothing asks for pictures) has no pixels,
 	// and encoding that would only log a failure for every plate.
 	havePixels := len(f.Pix) > 0
 
-	var fullJPEG []byte
-	if havePixels && c.cfg.Encoder != nil && (c.cfg.IncludeFullImage || c.cfg.Preview != nil) {
+	fullJPEG := pre.full
+	if fullJPEG == nil && havePixels && c.cfg.Encoder != nil && (c.cfg.IncludeFullImage || c.cfg.Preview != nil) {
 		if b, err := c.cfg.Encoder.EncodeFrame(f); err == nil {
 			fullJPEG = b
 		} else {
@@ -292,8 +296,8 @@ func (c *Camera) deliver(
 		fullJPEG = nil
 	}
 
-	var cropJPEG []byte
-	if havePixels && c.cfg.IncludeCropImage && c.cfg.Encoder != nil {
+	cropJPEG := pre.crop
+	if cropJPEG == nil && havePixels && c.cfg.IncludeCropImage && c.cfg.Encoder != nil {
 		if b, err := c.cfg.Encoder.EncodeCrop(f, cand.Box); err == nil {
 			cropJPEG = b
 		} else {

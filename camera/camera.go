@@ -244,6 +244,8 @@ type Camera struct {
 	consensus *alpr.Consensus
 	kept      map[uint64]*keptFrame
 	spare     [][]byte
+	// raw is how many of kept still hold a raw frame, so keep need not count them.
+	raw int
 
 	staleRun     int
 	lastDetectAt time.Time
@@ -288,6 +290,8 @@ type handles struct {
 	errDetect metrics.Counter
 	errOCR    metrics.Counter
 	errSink   metrics.Counter
+	// errImages counts a verdict that went out without the pictures that were asked for.
+	errImages metrics.Counter
 }
 
 // stageSink counts a reading that was read correctly and then lost on the way out.
@@ -298,6 +302,10 @@ type handles struct {
 // and "at the boundary" is an answer worth being able to give: without it, a sink failing quietly
 // looks exactly like a camera that stopped seeing plates.
 const stageSink = "sink"
+
+// stageImages counts a plate that was decided and delivered without the pictures the camera was
+// asked to attach, because no frame of its track was held any more.
+const stageImages = "images"
 
 // Label names. They are constants because a metric bound with "camera" here and read with
 // "camera_id" elsewhere is a query that returns nothing and an alert that never fires.
@@ -327,6 +335,7 @@ func bind(r metrics.Registry, id string) handles {
 		errDetect: inferenceErrors.With(id, metrics.StageDetect),
 		errOCR:    inferenceErrors.With(id, metrics.StageOCR),
 		errSink:   inferenceErrors.With(id, stageSink),
+		errImages: inferenceErrors.With(id, stageImages),
 	}
 }
 
